@@ -3,6 +3,8 @@
 
 EMCP lets your LLM agent interact with Emacs. The agent can look up documentation and definitions, take screenshots, read buffers, execute code and more. Exactly which [[#built-in-prompts][prompts]], [[#built-in-resources][resources]] and [[#built-in-tools][tools]] are available to the agent depends on the active [[#profiles][profile]].
 
+As an MCP implementation, EMCP supports all the core server features from the [[https://modelcontextprotocol.io/specification/2025-11-25/server][2025-11-25 version of the MCP specification]] and even has (as of yet unused) facilities for server-to-client notifications and requests. Regarding actual user-facing functionality, I am adding tools etc. to the project as I need them and find a usable design for them. So while I have plans for more tools, for now only the simple ones are in the repository and more complex ones like code execution do not exist yet (even though I teased it in the previous paragraph). However, if you really want a code execution tool /right now/, EMCP has been designed to be extensible and adding it yourself is almost trivial. Just [[#custom-components][follow the instructions]].
+
 * Installation
 
 Use the recipe =(emcp :fetcher git :url "https://codeberg.org/martenlienen/emcp")= to install EMCP, for example with ~package-vc-install~. =use-package= with [[https://github.com/progfolio/elpaca][elpaca]] would be
@@ -180,6 +182,9 @@ Tools:
 # end:profiles
 
 * Custom MCP Components
+:PROPERTIES:
+:CUSTOM_ID: custom-components
+:END:
 
 Define your own prompts, resources and tools with the macros below, then add them to a profile in ~emcp-profiles~ to make them available to clients. For a complete description of the output format for your components, consult the [[https://modelcontextprotocol.io/specification/2025-11-25/server][MCP specification]].
 
