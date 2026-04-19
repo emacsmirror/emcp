@@ -371,10 +371,10 @@ and RESPONSE is the JSON-RPC response."
                                      (version . "0.1.0")
                                      (description . "An MCP server for Emacs")
                                      (websiteUrl . "https://codeberg.org/martenlienen/emcp")
-                                     ,(when icon
-                                        `(icons . [((mimeType . "image/svg+xml")
-                                                    (sizes . ["any"])
-                                                    (src . ,icon))]))))
+                                     ,@(when icon
+                                         `((icons . [((mimeType . "image/svg+xml")
+                                                      (sizes . ["any"])
+                                                      (src . ,icon))])))))
                       (instructions . ,emcp-instructions)))))
     (emcp--log server session
       (info (format "New session %s" (plist-get session :id)))
