@@ -118,7 +118,7 @@ evaluate BODY for a message.  If the message is nil, nothing is logged."
                     `(when-let* (((<= ,level-pos ,(seq-position emcp-log-levels level)))
                                  (,message (progn ,@body)))
                        (let ((prefix (format "%s %s %s "
-                                             (format-time-string "%Y/%m/%d %H:%M:%S.%3N")
+                                             (format-time-string "%Y/%m/%d %T.%3N")
                                              ,level-name
                                              ,(if session
                                                   `(substring (plist-get ,session-var :id) 0 6)
@@ -189,9 +189,9 @@ Keys are interned so that the output matches handwritten alist style."
 (defun emcp--jsonrpc-type (object)
   "Determine the type of the JSON-RPC object OBJECT.
 
-Return `request' if OBJECT is a JSON-RPC request, `result' for a
-successful response, `error' for an error response, `notification' for a
-notification and nil otherwise."
+Return \\='request if OBJECT is a JSON-RPC request, \\='result for a
+successful response, \\='error for an error response, \\='notification
+for a notification and nil otherwise."
   (and (hash-table-p object)
        (equal (gethash "jsonrpc" object) "2.0")
        (if (stringp (gethash "method" object))
@@ -910,8 +910,8 @@ definition wins, so a profile can override items from included profiles."
 (defun emcp--dedup-by-name (symbols properties)
   "Deduplicate SYMBOLS by MCP name, keeping the last occurrence.
 
-PROPERTIES is a symbol property or list of properties to check.
-Each property holds a plist with a `:name' key."
+PROPERTIES is a symbol property or list of properties to check.  Each
+property holds a plist with a \\=':name key."
   (let ((seen (make-hash-table :test #'equal))
         result)
     (dolist (sym (reverse symbols))
