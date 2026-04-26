@@ -1,4 +1,4 @@
-#+title: EMCP - An MCP server for Emacs
+#+title: EMCP - Lets your agent talk to Emacs
 #+author: Marten Lienen
 
 EMCP lets your LLM agent interact with Emacs. The agent can look up documentation and definitions, take screenshots, read buffers, execute code and more. Exactly which [[#built-in-prompts][prompts]], [[#built-in-resources][resources]] and [[#built-in-tools][tools]] are available to the agent depends on the active [[#profiles][profile]].

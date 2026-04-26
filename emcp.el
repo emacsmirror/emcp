@@ -1,4 +1,4 @@
-;;; emcp.el --- An MCP server for Emacs -*- lexical-binding: t -*-
+;;; emcp.el --- Lets your agent talk to Emacs -*- lexical-binding: t -*-
 
 ;; Author: Marten Lienen <ml@martenlienen.com>
 ;; URL: https://codeberg.org/martenlienen/emcp
@@ -369,7 +369,7 @@ and RESPONSE is the JSON-RPC response."
                       (serverInfo . ((name . "EMCP")
                                      (title . "EMCP - An MCP server for Emacs")
                                      (version . "0.1.0")
-                                     (description . "An MCP server for Emacs")
+                                     (description . "Lets your agent talk to Emacs")
                                      (websiteUrl . "https://codeberg.org/martenlienen/emcp")
                                      ,@(when icon
                                          `((icons . [((mimeType . "image/svg+xml")
