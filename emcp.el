@@ -521,25 +521,25 @@ SEND-RESPONSE is called with the response alist."
                              "Internal server error"))))))
       (pcase (gethash "method" request)
         ("prompts/list"
-         (emcp--server-request-prompts/list server session request #'log-and-send))
+         (emcp--server-request--prompts-list server session request #'log-and-send))
         ("prompts/get"
-         (emcp--server-request-prompts/get server session request #'log-and-send))
+         (emcp--server-request--prompts-get server session request #'log-and-send))
         ("resources/list"
-         (emcp--server-request-resources/list server session request #'log-and-send))
+         (emcp--server-request--resources-list server session request #'log-and-send))
         ("resources/templates/list"
-         (emcp--server-request-resources/templates/list server session request #'log-and-send))
+         (emcp--server-request--resources-templates-list server session request #'log-and-send))
         ("resources/read"
-         (emcp--server-request-resources/read server session request #'log-and-send))
+         (emcp--server-request--resources-read server session request #'log-and-send))
         ("tools/list"
-         (emcp--server-request-tools/list server session request #'log-and-send))
+         (emcp--server-request--tools-list server session request #'log-and-send))
         ("tools/call"
-         (emcp--server-request-tools/call server session request #'log-and-send))
+         (emcp--server-request--tools-call server session request #'log-and-send))
         (_ (log-and-send (emcp--jsonrpc-error
                           request
                           emcp--jsonrpc-method-not-found
                           "Method not found")))))))
 
-(defun emcp--server-request-prompts/list (server _session request send-response)
+(defun emcp--server-request--prompts-list (server _session request send-response)
   "List all prompt definitions on SERVER.
 
 SEND-RESPONSE is called with the response to REQUEST."
@@ -549,7 +549,7 @@ SEND-RESPONSE is called with the response to REQUEST."
     (funcall send-response
              (emcp--jsonrpc-result request `((prompts . ,(vconcat descriptions)))))))
 
-(defun emcp--server-request-prompts/get (server session request send-response)
+(defun emcp--server-request--prompts-get (server session request send-response)
   "Execute a prompt on SERVER in SESSION.
 
 SEND-RESPONSE is called with the response to REQUEST."
@@ -563,7 +563,7 @@ SEND-RESPONSE is called with the response to REQUEST."
                 (funcall send-response (emcp--jsonrpc-error request code message data))))
       (funcall prompt server session #'send-result #'send-error args))))
 
-(defun emcp--server-request-resources/list (server _session request send-response)
+(defun emcp--server-request--resources-list (server _session request send-response)
   "List all static resources on SERVER.
 
 SEND-RESPONSE is called with the response to REQUEST."
@@ -573,7 +573,7 @@ SEND-RESPONSE is called with the response to REQUEST."
     (funcall send-response
              (emcp--jsonrpc-result request `((resources . ,(vconcat descriptions)))))))
 
-(defun emcp--server-request-resources/templates/list (server _session request send-response)
+(defun emcp--server-request--resources-templates-list (server _session request send-response)
   "List all resource templates on SERVER.
 
 SEND-RESPONSE is called with the response to REQUEST."
@@ -598,7 +598,7 @@ Return (SYMBOL . PARAMS) or nil."
      (emcp--server-resource-templates server))
     result))
 
-(defun emcp--server-request-resources/read (server session request send-response)
+(defun emcp--server-request--resources-read (server session request send-response)
   "Read a resource on SERVER in SESSION.
 
 SEND-RESPONSE is called with the response to REQUEST."
@@ -622,7 +622,7 @@ SEND-RESPONSE is called with the response to REQUEST."
         (error
          (send-error -32002 (error-message-string err)))))))
 
-(defun emcp--server-request-tools/list (server _session request send-response)
+(defun emcp--server-request--tools-list (server _session request send-response)
   "List all tool definitions on SERVER.
 
 SEND-RESPONSE is called with the response to REQUEST."
@@ -632,7 +632,7 @@ SEND-RESPONSE is called with the response to REQUEST."
     (funcall send-response
              (emcp--jsonrpc-result request `((tools . ,(vconcat descriptions)))))))
 
-(defun emcp--server-request-tools/call (server session request send-response)
+(defun emcp--server-request--tools-call (server session request send-response)
   "Execute a tool on SERVER in SESSION.
 
 SEND-RESPONSE is called with the response to REQUEST."
