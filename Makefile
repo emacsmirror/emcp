@@ -5,6 +5,8 @@ EL_FILES = emcp-prompts.el emcp-resources.el emcp-tools.el emcp.el
 LOAD_PATH="(progn \
   (require 'package) \
   (package-initialize) \
+  (unless (package-installed-p 'http-server) \
+    (package-vc-install \"https://codeberg.org/martenlienen/http-server.el.git\")) \
   (add-to-list 'load-path default-directory))"
 
 .PHONY: test lint byte-compile checkdoc docs clean
