@@ -31,6 +31,8 @@
 (require 'lisp-mnt)
 (require 'url-util)
 
+(declare-function x-export-frames "xfns.c")
+
 (defmacro emcp-deftool (name args docstring &rest body)
   "Define NAME as an MCP tool.
 

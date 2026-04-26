@@ -28,6 +28,8 @@
 (require 'cl-lib)
 (require 'seq)
 
+(declare-function x-export-frames "xfns.c")
+
 (defmacro emcp-defprompt (name args docstring &rest body)
   "Define NAME as an MCP prompt.
 
