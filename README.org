@@ -46,7 +46,7 @@ Then start EMCP with =M-x emcp-start= and register the server with your client, 
 
 The agent-shell setup above is the preferred way to use EMCP and does not require any other commands.
 
-For other cases, call ~emcp-start~ interactively, which asks for a profile and places the server URL on the kill-ring. ~emcp-stop~, ~emcp-restart~ and ~emcp-reload~ do what you would expect them to do and are useful when you develop [[*Custom MCP Components][your own MCP components]] or custom profiles.
+For other cases, call ~emcp-start~ interactively, which asks for a profile and places the server URL on the kill-ring. ~emcp-stop~, ~emcp-restart~ and ~emcp-reload~ do what you would expect them to do and are useful when you develop [[#custom-components][your own MCP components]] or custom profiles.
 
 * Profiles
 :PROPERTIES:
