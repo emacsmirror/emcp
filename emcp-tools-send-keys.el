@@ -31,6 +31,7 @@
 (require 'cl-lib)
 (require 'subr-x)
 
+(require 'emcp-confirm)
 (require 'emcp-core)
 
 (defgroup emcp-tools-send-keys ()
@@ -48,11 +49,6 @@ query  open the confirmation buffer."
                  (const :tag "Always reject" nil)
                  (const :tag "Ask the user" query)))
 
-(defcustom emcp-tools-send-keys-confirm-buffer-name "*EMCP send-keys*"
-  "Buffer name for the send-keys confirmation UI."
-  :group 'emcp-tools-send-keys
-  :type 'string)
-
 ;;; Authorization
 
 (defun emcp-tools-send-keys--authorize (session)
@@ -68,33 +64,6 @@ Return t (accept), nil (reject), or `prompt' (ask user)."
 
 ;;; Confirmation buffer
 
-(defvar-local emcp-tools-send-keys--pending nil
-  "Plist of the buffer's pending request.
-
-Keys: :session SESSION :keys KEYS :callback CB.")
-
-(defvar emcp-tools-send-keys-confirm-mode-map
-  (let ((m (make-sparse-keymap)))
-    (define-key m "y" (lambda () (interactive) (emcp-tools-send-keys--dispatch 'yes-once)))
-    (define-key m "n" (lambda () (interactive) (emcp-tools-send-keys--dispatch 'no-once)))
-    (define-key m "a" (lambda () (interactive) (emcp-tools-send-keys--dispatch 'mode-accept)))
-    (define-key m "r" (lambda () (interactive) (emcp-tools-send-keys--dispatch 'mode-reject)))
-    m)
-  "Keymap for `emcp-tools-send-keys-confirm-mode'.")
-
-(define-derived-mode emcp-tools-send-keys-confirm-mode special-mode "EMCP-keys"
-  "Major mode for the EMCP send-keys confirmation buffer."
-  (setq buffer-read-only t))
-
-(defun emcp-tools-send-keys--dispatch (action)
-  "Apply ACTION for the buffer's pending request and dismiss the buffer."
-  (let* ((pending emcp-tools-send-keys--pending)
-         (session (plist-get pending :session))
-         (callback (plist-get pending :callback)))
-    (unless pending (user-error "No pending send-keys request in this buffer"))
-    (funcall callback (emcp-tools-send-keys--apply-action action session))
-    (quit-window t)))
-
 (defun emcp-tools-send-keys--apply-action (action session)
   "Convert ACTION into a decision about a send-keys call in SESSION.
 
@@ -105,18 +74,6 @@ May mutate SESSION to record a session mode."
     ('mode-accept (plist-put session :emcp-tools-send-keys-mode 'accept) t)
     ('mode-reject (plist-put session :emcp-tools-send-keys-mode 'reject) nil)))
 
-(defun emcp-tools-send-keys--render (session keys)
-  "Render the confirmation buffer body for SESSION and KEYS."
-  (let ((session-id (or (plist-get session :id) "?")))
-    (concat
-     (format "The agent in session %s wants to send the keys:\n\n"
-             (substring session-id 0 (min 8 (length session-id))))
-     (format "  %s\n" keys)
-     "\nAccept?\n"
-     "  [y] Yes      [n] No\n"
-     "\nSession mode (applies to all subsequent send-keys calls in this session):\n"
-     "  [a] Always accept     [r] Always reject\n")))
-
 (defun emcp-tools-send-keys--prompt (session keys callback)
   "Open the confirmation buffer for SESSION and KEYS.
 
@@ -124,18 +81,22 @@ CALLBACK is invoked with a t or nil decision after the user picks an
 action.
 
 Customize placement of the confirmation buffer by adding an entry for
-`emcp-tools-send-keys-confirm-buffer-name' to `display-buffer-alist'."
-  (let ((buf (get-buffer-create emcp-tools-send-keys-confirm-buffer-name)))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (emcp-tools-send-keys-confirm-mode)
-        (insert (emcp-tools-send-keys--render session keys)))
-      (setq emcp-tools-send-keys--pending
-            (list :session session :keys keys :callback callback)))
-    (pop-to-buffer buf '((display-buffer-in-side-window)
-                         (side . bottom)
-                         (window-height . 0.4)))))
+`emcp-confirm-buffer-name' to `display-buffer-alist'."
+  (emcp-confirm-prompt
+   :session session
+   :title "send the keys"
+   :body keys
+   :on-dismiss 'no-once
+   :groups
+   `(( :title "Accept?"
+       :actions ((?y "Yes" :result yes-once)
+                 (?n "No"  :result no-once)))
+     ( :title "Session mode (applies to all subsequent send-keys calls in this session)"
+       :actions ((?a "Always accept" :result mode-accept)
+                 (?r "Always reject" :result mode-reject))))
+   :callback (lambda (action)
+               (funcall callback
+                        (emcp-tools-send-keys--apply-action action session)))))
 
 ;;; Decision logging
 

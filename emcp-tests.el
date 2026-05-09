@@ -23,6 +23,7 @@
 
 (require 'cl-lib)
 (require 'emcp)
+(require 'emcp-confirm)
 (require 'emcp-tools-eval)
 (require 'emcp-tools-send-keys)
 (require 'ert)
@@ -784,15 +785,12 @@ the full JSON-RPC response."
   (should (eq (emcp-tools-send-keys--apply-action 'yes-once nil) t))
   (should (eq (emcp-tools-send-keys--apply-action 'no-once nil) nil)))
 
-(ert-deftest emcp-tests-send-keys-action-mode-accept ()
+(ert-deftest emcp-tests-send-keys-action-mode ()
   ;; Real sessions always have at least an :id key so `plist-put' mutates
   ;; in place.
   (let ((session (list :id "test-session")))
     (should (eq (emcp-tools-send-keys--apply-action 'mode-accept session) t))
-    (should (eq (plist-get session :emcp-tools-send-keys-mode) 'accept))))
-
-(ert-deftest emcp-tests-send-keys-action-mode-reject ()
-  (let ((session (list :id "test-session")))
+    (should (eq (plist-get session :emcp-tools-send-keys-mode) 'accept))
     (should (eq (emcp-tools-send-keys--apply-action 'mode-reject session) nil))
     (should (eq (plist-get session :emcp-tools-send-keys-mode) 'reject))))
 
@@ -816,6 +814,66 @@ the full JSON-RPC response."
                                                  t)))
       ;; Buffer must remain untouched on rejection
       (should (equal (buffer-string) "")))))
+
+;;; Confirm buffer
+
+(ert-deftest emcp-tests-confirm-result-action ()
+  ;; Pressing a :result key invokes the callback once with that symbol and
+  ;; kills the buffer.  Setting :on-dismiss also exercises the dispatch
+  ;; path's `--pending'-clearing: if the kill-buffer-hook fired again, the
+  ;; callback would be invoked twice.
+  (let* ((calls nil)
+         (cb (lambda (r) (push r calls))))
+    (cl-letf (((symbol-function 'pop-to-buffer) #'ignore))
+      (let ((buf (emcp-confirm-prompt
+                  :session '(:id "test-session")
+                  :title "do thing"
+                  :body "thing"
+                  :on-dismiss 'no-once
+                  :groups '((:title "Accept?"
+                                    :actions ((?y "Yes" :result yes-once)
+                                              (?n "No"  :result no-once))))
+                  :callback cb)))
+        (with-current-buffer buf (emcp-confirm--dispatch 'yes-once))
+        (should (equal calls '(yes-once)))
+        (should-not (buffer-live-p buf))))))
+
+(ert-deftest emcp-tests-confirm-command-action-does-not-dismiss ()
+  ;; A :command action runs the bound function without dismissing the buffer
+  ;; or invoking the callback.
+  (let* ((calls nil)
+         (cmd-runs 0)
+         (cmd (lambda () (interactive) (cl-incf cmd-runs)))
+         (cb (lambda (r) (push r calls))))
+    (cl-letf (((symbol-function 'pop-to-buffer) #'ignore))
+      (let ((buf (emcp-confirm-prompt
+                  :session '(:id "test")
+                  :title "do thing"
+                  :body "thing"
+                  :groups `((:actions ((?w "Aux" :command ,cmd))))
+                  :callback cb)))
+        (with-current-buffer buf
+          (call-interactively (lookup-key (current-local-map) "w")))
+        (should (= cmd-runs 1))
+        (should (null calls))
+        (should (buffer-live-p buf))
+        (kill-buffer buf)))))
+
+(ert-deftest emcp-tests-confirm-dismiss-invokes-callback ()
+  ;; Killing the buffer without picking a :result action invokes the
+  ;; callback with the :on-dismiss symbol.
+  (let* ((calls nil)
+         (cb (lambda (r) (push r calls))))
+    (cl-letf (((symbol-function 'pop-to-buffer) #'ignore))
+      (let ((buf (emcp-confirm-prompt
+                  :session '(:id "test")
+                  :title "do thing"
+                  :body ""
+                  :on-dismiss 'no-once
+                  :groups '((:actions ((?y "Yes" :result yes-once))))
+                  :callback cb)))
+        (kill-buffer buf)
+        (should (equal calls '(no-once)))))))
 
 (provide 'emcp-tests)
 ;;; emcp-tests.el ends here

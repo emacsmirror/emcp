@@ -30,6 +30,7 @@
 (require 'pp)
 (require 'subr-x)
 
+(require 'emcp-confirm)
 (require 'emcp-core)
 
 (define-error 'emcp-tools-eval-parse-error
@@ -59,11 +60,6 @@ The file contains a single sexp: an alist of (FORM . DECISION) pairs
 where DECISION is t (accept) or nil (reject)."
   :group 'emcp-tools-eval
   :type 'file)
-
-(defcustom emcp-tools-eval-confirm-buffer-name "*EMCP eval*"
-  "Buffer name for the eval confirmation UI."
-  :group 'emcp-tools-eval
-  :type 'string)
 
 ;;; Parsing
 
@@ -150,44 +146,11 @@ nil (reject), or `prompt' (ask user)."
 
 ;;; Confirmation buffer
 
-(defvar-local emcp-tools-eval--pending nil
-  "Plist of the buffer's pending request.
-
-Keys: :session SESSION :form FORM :code CODE :callback CB.")
-
-(defvar emcp-tools-eval-confirm-mode-map
-  (let ((m (make-sparse-keymap)))
-    (define-key m "y" (lambda () (interactive) (emcp-tools-eval--dispatch 'yes-once)))
-    (define-key m "n" (lambda () (interactive) (emcp-tools-eval--dispatch 'no-once)))
-    (define-key m "Y" (lambda () (interactive) (emcp-tools-eval--dispatch 'yes-session)))
-    (define-key m "N" (lambda () (interactive) (emcp-tools-eval--dispatch 'no-session)))
-    (define-key m "!" (lambda () (interactive) (emcp-tools-eval--dispatch 'yes-always)))
-    (define-key m "~" (lambda () (interactive) (emcp-tools-eval--dispatch 'no-always)))
-    (define-key m "a" (lambda () (interactive) (emcp-tools-eval--dispatch 'mode-accept)))
-    (define-key m "r" (lambda () (interactive) (emcp-tools-eval--dispatch 'mode-reject)))
-    (define-key m "w" #'emcp-tools-eval--copy-code-to-kill-ring)
-    m)
-  "Keymap for `emcp-tools-eval-confirm-mode'.")
-
-(define-derived-mode emcp-tools-eval-confirm-mode special-mode "EMCP-eval"
-  "Major mode for the EMCP eval confirmation buffer."
-  (setq buffer-read-only t))
-
 (defun emcp-tools-eval--copy-code-to-kill-ring ()
   "Copy the code under review to the `kill-ring' without closing the buffer."
   (interactive)
-  (kill-new (plist-get emcp-tools-eval--pending :code))
+  (kill-new (plist-get (plist-get emcp-confirm--pending :context) :code))
   (message "EMCP: code copied to kill-ring"))
-
-(defun emcp-tools-eval--dispatch (action)
-  "Apply ACTION for the buffer's pending request and dismiss the buffer."
-  (let* ((pending emcp-tools-eval--pending)
-         (session (plist-get pending :session))
-         (form (plist-get pending :form))
-         (callback (plist-get pending :callback)))
-    (unless pending (user-error "No pending eval request in this buffer"))
-    (funcall callback (emcp-tools-eval--apply-action action session form))
-    (quit-window t)))
 
 (defun emcp-tools-eval--apply-action (action session form)
   "Convert ACTION into a decision about FORM.
@@ -209,61 +172,48 @@ persistent cache."
       ('mode-reject (plist-put session :emcp-tools-eval-mode 'reject) nil))))
 
 (defun emcp-tools-eval--fontify-elisp (str)
-  "Return STR with `emacs-lisp-mode' font-lock applied, indented by two spaces.
+  "Return STR with `emacs-lisp-mode' font-lock applied.
 
 Uses a temp buffer in `emacs-lisp-mode' and `font-lock-ensure' so that
 the returned string carries text properties that the confirmation
-buffer (in `emcp-tools-eval-confirm-mode', a `special-mode' derivative
-without font-lock of its own) renders directly."
+buffer (in `emcp-confirm-mode', a `special-mode' derivative without
+font-lock of its own) renders directly."
   (with-temp-buffer
     (insert str)
     (delay-mode-hooks (emacs-lisp-mode))
     (font-lock-ensure)
-    (goto-char (point-min))
-    (while (not (eobp))
-      (insert "  ")
-      (forward-line 1))
     (buffer-string)))
 
-(defun emcp-tools-eval--render (session form)
-  "Render the confirmation buffer body for SESSION and FORM.
-
-The pretty-printed FORM is run through `emcp-tools-eval--fontify-elisp'
-so that the displayed code carries the same syntax highlighting as it
-would in any `emacs-lisp-mode' buffer.  This makes the code easier to
-audit at a glance."
-  (let* ((session-id (or (plist-get session :id) "?"))
-         (pretty (string-trim (pp-to-string form))))
-    (concat
-     (format "The agent in session %s wants to evaluate:\n\n"
-             (substring session-id 0 (min 8 (length session-id))))
-     (emcp-tools-eval--fontify-elisp pretty)
-     "\n\nAccept?\n"
-     "  [y] Yes once          [Y] Yes this session     [!] Yes always (saved)\n"
-     "  [n] No once           [N] No this session      [~] No always (saved)\n"
-     "\nSession mode (applies to all subsequent eval calls in this session):\n"
-     "  [a] Always accept     [r] Always reject\n"
-     "\n  [w] Copy code to kill-ring (does NOT close this buffer)\n")))
-
-(defun emcp-tools-eval--prompt (session form code callback)
-  "Open the confirmation buffer for SESSION, FORM and CODE.
+(defun emcp-tools-eval--prompt (session form callback)
+  "Open the confirmation buffer for SESSION and FORM.
 
 CALLBACK is invoked with a t or nil decision after the user picks an
-action.
-
-Customize placement of the confirmation buffer by adding an entry for
-`emcp-tools-eval-confirm-buffer-name' to `display-buffer-alist'."
-  (let ((buf (get-buffer-create emcp-tools-eval-confirm-buffer-name)))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (emcp-tools-eval-confirm-mode)
-        (insert (emcp-tools-eval--render session form)))
-      (setq emcp-tools-eval--pending
-            (list :session session :form form :code code :callback callback)))
-    (pop-to-buffer buf '((display-buffer-in-side-window)
-                         (side . bottom)
-                         (window-height . 0.4)))))
+action."
+  (let* ((pretty (string-trim (pp-to-string form)))
+         (code (emcp-tools-eval--fontify-elisp pretty)))
+    (emcp-confirm-prompt
+     :session session
+     :title "evaluate"
+     :body code
+     :context (list :code code)
+     :on-dismiss 'no-once
+     :groups
+     `(( :title "Accept?"
+         :columns 3
+         :actions ((?y "Yes once"           :result yes-once)
+                   (?n "No once"            :result no-once)
+                   (?Y "Yes this session"   :result yes-session)
+                   (?N "No this session"    :result no-session)
+                   (?! "Yes always (saved)" :result yes-always)
+                   (?~ "No always (saved)"  :result no-always)))
+       ( :title "Session mode (applies to all subsequent eval calls in this session)"
+         :actions ((?a "Always accept" :result mode-accept)
+                   (?r "Always reject" :result mode-reject)))
+       ( :actions ((?w "Copy code to kill-ring"
+                       :command emcp-tools-eval--copy-code-to-kill-ring))))
+     :callback (lambda (action)
+                 (funcall callback
+                          (emcp-tools-eval--apply-action action session form))))))
 
 ;;; Decision logging
 
@@ -343,7 +293,7 @@ and decision fatigue."
           (pcase decision
             ('prompt
              (emcp-tools-eval--prompt
-              session form code
+              session form
               (lambda (d) (maybe-eval d 'user))))
             (_
              (maybe-eval decision (emcp-tools-eval--decision-source session form))))))
