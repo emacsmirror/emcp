@@ -1,6 +1,6 @@
 EMACS ?= emacs
 
-EL_FILES = emcp-uri.el emcp-core.el emcp-http.el emcp-prompts.el emcp-resources.el emcp-tools.el emcp-tools-eval.el emcp.el
+EL_FILES = emcp-uri.el emcp-core.el emcp-http.el emcp-prompts.el emcp-resources.el emcp-tools.el emcp-tools-eval.el emcp-tools-send-keys.el emcp.el
 
 LOAD_PATH="(progn \
   (require 'package) \

@@ -24,6 +24,7 @@
 (require 'cl-lib)
 (require 'emcp)
 (require 'emcp-tools-eval)
+(require 'emcp-tools-send-keys)
 (require 'ert)
 
 (defmacro with-server (server form &rest body)
@@ -754,6 +755,67 @@ the full JSON-RPC response."
                                                                                  (alist-get 'result response)) 0))))
                                      (should (equal text "2"))
                                      (should (= emcp-tests--probe 1))))))
+
+;;; Send-keys tool
+
+(ert-deftest emcp-tests-send-keys-authorize-mode-accept ()
+  ;; Session mode `accept' overrides a default-reject policy.
+  (let ((emcp-tools-send-keys-default-policy nil))
+    (should (eq (emcp-tools-send-keys--authorize
+                 (list :emcp-tools-send-keys-mode 'accept))
+                t))))
+
+(ert-deftest emcp-tests-send-keys-authorize-mode-reject ()
+  ;; Session mode `reject' overrides a default-accept policy.
+  (let ((emcp-tools-send-keys-default-policy t))
+    (should (eq (emcp-tools-send-keys--authorize
+                 (list :emcp-tools-send-keys-mode 'reject))
+                nil))))
+
+(ert-deftest emcp-tests-send-keys-authorize-default ()
+  (let ((emcp-tools-send-keys-default-policy t))
+    (should (eq (emcp-tools-send-keys--authorize nil) t)))
+  (let ((emcp-tools-send-keys-default-policy nil))
+    (should (eq (emcp-tools-send-keys--authorize nil) nil)))
+  (let ((emcp-tools-send-keys-default-policy 'query))
+    (should (eq (emcp-tools-send-keys--authorize nil) 'prompt))))
+
+(ert-deftest emcp-tests-send-keys-action-once ()
+  (should (eq (emcp-tools-send-keys--apply-action 'yes-once nil) t))
+  (should (eq (emcp-tools-send-keys--apply-action 'no-once nil) nil)))
+
+(ert-deftest emcp-tests-send-keys-action-mode-accept ()
+  ;; Real sessions always have at least an :id key so `plist-put' mutates
+  ;; in place.
+  (let ((session (list :id "test-session")))
+    (should (eq (emcp-tools-send-keys--apply-action 'mode-accept session) t))
+    (should (eq (plist-get session :emcp-tools-send-keys-mode) 'accept))))
+
+(ert-deftest emcp-tests-send-keys-action-mode-reject ()
+  (let ((session (list :id "test-session")))
+    (should (eq (emcp-tools-send-keys--apply-action 'mode-reject session) nil))
+    (should (eq (plist-get session :emcp-tools-send-keys-mode) 'reject))))
+
+(ert-deftest emcp-tests-send-keys-tool-default-accept ()
+  ;; Self-insert keys land in the current buffer at call time.
+  (let ((emcp-tools-send-keys-default-policy t))
+    (with-temp-buffer
+      (emcp-tests-with-tool-response response 'emcp-tools-send-keys
+                                     '((keys . "h e l l o"))
+                                     (should-not (alist-get 'isError
+                                                            (alist-get 'result response))))
+      (should (equal (buffer-string) "hello")))))
+
+(ert-deftest emcp-tests-send-keys-tool-default-reject ()
+  (let ((emcp-tools-send-keys-default-policy nil))
+    (with-temp-buffer
+      (emcp-tests-with-tool-response response 'emcp-tools-send-keys
+                                     '((keys . "h e l l o"))
+                                     (should (eq (alist-get 'isError
+                                                            (alist-get 'result response))
+                                                 t)))
+      ;; Buffer must remain untouched on rejection
+      (should (equal (buffer-string) "")))))
 
 (provide 'emcp-tests)
 ;;; emcp-tests.el ends here

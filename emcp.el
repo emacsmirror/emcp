@@ -44,6 +44,7 @@
 (require 'emcp-resources)
 (require 'emcp-tools)
 (require 'emcp-tools-eval)
+(require 'emcp-tools-send-keys)
 
 (defcustom emcp-profiles
   '((inspect . ( :description "Ask Emacs about itself (docs, definitions, info pages).
@@ -72,10 +73,11 @@ inspect its current state like:
                          emcp-tools-screenshot)))
     (full-control . ( :description "Full control over Emacs.
 
-This allows arbitrary code evaluation protected by a user confirmation
-interface."
+Adds tools to evaluate arbitrary Emacs Lisp and to send arbitrary key
+sequences.  Both are gated by user confirmation."
                       :include (inspect develop)
-                      :tools (emcp-tools-eval))))
+                      :tools (emcp-tools-eval
+                              emcp-tools-send-keys))))
   "Profiles of prompts, resources and tools.
 
 :include includes the given profiles when the current one is started,

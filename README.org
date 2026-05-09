@@ -194,13 +194,14 @@ Tools:
 
 Full control over Emacs.
 
-This allows arbitrary code evaluation protected by a user confirmation
-interface.
+Adds tools to evaluate arbitrary Emacs Lisp and to send arbitrary key
+sequences.  Both are gated by user confirmation.
 
 Includes: [[#profile-inspect][=inspect=]], [[#profile-develop][=develop=]].
 
 Tools:
 - [[#tool-eval][=eval=]]
+- [[#tool-send-keys][=send-keys=]]
 # end:profiles
 
 * Custom MCP Components
@@ -611,6 +612,22 @@ Parameters:
 :END:
 
 View screenshots of all visible Emacs frames.
+
+*** =send-keys= ~(emcp-tools-send-keys)~
+:PROPERTIES:
+:CUSTOM_ID: tool-send-keys
+:END:
+
+Send a key sequence to Emacs as if the user typed it.
+
+Each call requires user confirmation, with optional session-wide accept
+or reject modes for trusted or untrusted sessions.  Decisions are not
+cached across calls: the effect of a key sequence depends on the current
+buffer, mode, and minibuffer state, so a past decision is rarely a good
+guide for a future one.
+
+Parameters:
+- =keys= (string) :: Key sequence in `kbd' notation, e.g. =C-x C-f=, =M-x list-buffers RET=, or =h e l l o= for literal characters.
 
 *** =set-variable= ~(emcp-tools-set-variable)~
 :PROPERTIES:
