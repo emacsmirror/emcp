@@ -7,11 +7,13 @@ As an MCP implementation, EMCP supports all the core server features from the [[
 
 * Installation
 
-Use the recipe =(emcp :fetcher git :url "https://codeberg.org/martenlienen/emcp")= to install EMCP, for example with ~package-vc-install~. =use-package= with [[https://github.com/progfolio/elpaca][elpaca]] would be
+You can install EMCP from MELPA, for example =use-package= with [[https://github.com/progfolio/elpaca][elpaca]] would be
 #+begin_src emacs-lisp
   (use-package emcp
-    :ensure (emcp :fetcher git :url "https://codeberg.org/martenlienen/emcp"))
+    :ensure t)
 #+end_src
+
+Alternatively, you can use the recipe =(emcp :fetcher git :url "https://codeberg.org/martenlienen/emcp")= to install directly from the repository, for example with ~package-vc-install~.
 
 ** Client Setup
 
