@@ -350,7 +350,7 @@ the full JSON-RPC response."
   (emcp-tests-with-tool-response response 'emcp-tools-find-definition
                                  '((symbol . "emcp--server-stop"))
     (let ((text (alist-get 'text (aref (alist-get 'content (alist-get 'result response)) 0))))
-      (should (string-match-p "emcp\\.el" text))
+      (should (string-match-p "emcp-core\\.el" text))
       (should (string-match-p "defun emcp--server-stop" text)))))
 
 (ert-deftest emcp-tests-find-definition-not-found ()
@@ -382,21 +382,21 @@ the full JSON-RPC response."
 
 (ert-deftest emcp-tests-uri-template-compile ()
   (pcase-let ((`(,regex . ,params)
-               (emcp-resources--compile-uri-template "info://{manual}/{node}")))
+               (emcp-uri--compile-template "info://{manual}/{node}")))
     (should (equal params '(manual node)))
     (should (string-match-p regex "info://elisp/Symbols"))
     (should-not (string-match-p regex "http://example.com"))))
 
 (ert-deftest emcp-tests-uri-template-match ()
-  (let ((compiled (emcp-resources--compile-uri-template "info://{manual}/{node}")))
-    (should (equal (emcp-resources--match-uri "info://elisp/Symbols" compiled)
+  (let ((compiled (emcp-uri--compile-template "info://{manual}/{node}")))
+    (should (equal (emcp-uri--match "info://elisp/Symbols" compiled)
                    '((manual . "elisp") (node . "Symbols"))))
-    (should (equal (emcp-resources--match-uri "info://elisp/Buffer%20List" compiled)
+    (should (equal (emcp-uri--match "info://elisp/Buffer%20List" compiled)
                    '((manual . "elisp") (node . "Buffer List"))))
-    (should-not (emcp-resources--match-uri "http://example.com" compiled))))
+    (should-not (emcp-uri--match "http://example.com" compiled))))
 
 (ert-deftest emcp-tests-uri-build ()
-  (should (equal (emcp-resources--build-uri "info://{manual}/{node}"
+  (should (equal (emcp-uri--build "info://{manual}/{node}"
                                             '((manual . "elisp") (node . "Buffer List")))
                  "info://elisp/Buffer%20List")))
 

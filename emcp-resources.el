@@ -27,165 +27,9 @@
 
 (require 'cl-lib)
 (require 'info)
-(require 'url-util)
 
-;;; URI template utilities
-;; Simple subset of RFC 6570 handling {param} in path segments.
-
-(defun emcp-resources--compile-uri-template (template)
-  "Compile URI TEMPLATE into a regex and parameter list.
-
-Return (REGEX . PARAMS) where REGEX is a string that matches URIs
-conforming to TEMPLATE and PARAMS is the ordered list of parameter
-symbols corresponding to capture groups in REGEX."
-  (let (params
-        (pos 0)
-        (regex "\\`"))
-    (while (string-match "{\\([^}]+\\)}" template pos)
-      (setq regex (concat regex
-                          (regexp-quote (substring template pos (match-beginning 0)))
-                          "\\([^/]+\\)"))
-      (push (intern (match-string 1 template)) params)
-      (setq pos (match-end 0)))
-    (setq regex (concat regex (regexp-quote (substring template pos)) "\\'"))
-    (cons regex (nreverse params))))
-
-(defun emcp-resources--match-uri (uri compiled-template)
-  "Match URI against COMPILED-TEMPLATE.
-
-COMPILED-TEMPLATE is (REGEX . PARAMS) as returned by
-`emcp-resources--compile-uri-template'.  Return an alist of (PARAM
-. DECODED-VALUE) or nil if URI does not match."
-  (pcase-let ((`(,regex . ,params) compiled-template))
-    (when (string-match regex uri)
-      (cl-loop for param in params
-               for i from 1
-               collect (cons param (url-unhex-string (match-string i uri)))))))
-
-(defun emcp-resources--build-uri (template params)
-  "Build a URI from TEMPLATE by substituting PARAMS.
-
-PARAMS is an alist of (PARAM . VALUE).  Values are percent-encoded."
-  (let ((uri template))
-    (pcase-dolist (`(,param . ,value) params)
-      (setq uri (replace-regexp-in-string
-                 (regexp-quote (concat "{" (symbol-name param) "}"))
-                 (url-hexify-string value)
-                 uri t t)))
-    uri))
-
-;;; Resource macro
-
-(eval-and-compile
-  (defun emcp-resources--extract-params (uri-or-template)
-    "Extract parameter symbols from URI-OR-TEMPLATE.
-
-Return a list of symbols for each {param} placeholder."
-    (let (params (pos 0))
-      (while (string-match "{\\([^}]+\\)}" uri-or-template pos)
-        (push (intern (match-string 1 uri-or-template)) params)
-        (setq pos (match-end 0)))
-      (nreverse params))))
-
-(defmacro emcp-defresource (name uri-or-template docstring &rest body)
-  "Define NAME as an MCP resource or resource template.
-
-URI-OR-TEMPLATE is a URI string, optionally containing {param}
-placeholders per RFC 6570.  Parameter symbols are extracted
-automatically and bound in BODY.  If there are no placeholders, NAME is
-a static resource listed via resources/list; otherwise it is a resource
-template listed via resources/templates/list.
-
-The following keyword options may appear before BODY:
-
- :name MCP resource name (default NAME).
- :title MCP resource title.
- :description MCP resource description (default DOCSTRING).
- :mime-type MIME type of the resource content.
- :async When non-nil, BODY handles responses manually via locally bound
-        functions `send-result' and `send-error'.  When nil, BODY
-        returns a resource result directly.
-
-When the client reads the resource, execute BODY to produce a result.
-In addition to the template parameters, the following symbols are bound
-in BODY:
-
- `server': The MCP server.
- `session': Client's MCP session.
- `uri': The full request URI.
-
-If :async is nil or not provided, BODY just returns a resources/read
-result alist as described in the MCP specification.  If :async is
-non-nil, the following functions are bound and BODY has to call exactly
-one of them once to send a result or error:
-
- `send-result' (RESULT): Send the resource RESULT to the client.
- `send-error' (CODE MESSAGE &optional DATA): Signal an error to the
- client with error code CODE, MESSAGE and optional error DATA.
-
-RESULT is a resources/read result JSON document (an alist) as described
-in the spec, see this URL
-https://modelcontextprotocol.io/specification/2025-11-25/server/resources"
-  (declare (indent 2) (debug (symbolp stringp stringp body)))
-  (let (mcp-name mcp-title mcp-description mime-type async-p)
-    (while (keywordp (car body))
-      (pcase (pop body)
-        (:name (setq mcp-name (pop body)))
-        (:title (setq mcp-title (pop body)))
-        (:description (setq mcp-description (pop body)))
-        (:mime-type (setq mime-type (pop body)))
-        (:async (setq async-p (pop body)))))
-    (unless mcp-name
-      (setq mcp-name (symbol-name name)))
-    (unless mcp-description
-      (setq mcp-description docstring))
-    (let* ((args (emcp-resources--extract-params uri-or-template))
-           (params-var (gensym "params"))
-           (arg-bindings
-            (cl-loop for sym in args
-                     collect `(,sym (alist-get ',sym ,params-var))))
-           (send-result-var (gensym "send-result"))
-           (send-error-var (gensym "send-error")))
-      (let ((metadata
-             `((,(if args 'uriTemplate 'uri) . ,uri-or-template)
-               (name . ,mcp-name)
-               ,@(when mcp-title `((title . ,mcp-title)))
-               (description . ,mcp-description)
-               ,@(when mime-type `((mimeType . ,mime-type))))))
-        (if args
-            ;; Resource template
-            `(progn
-               (put ',name 'emcp-resource-template
-                    (list :name ,uri-or-template
-                          :metadata ',metadata
-                          :match (emcp-resources--compile-uri-template
-                                  ,uri-or-template)))
-               (defun ,name (server session ,send-result-var ,send-error-var uri ,params-var)
-                 ,docstring
-                 (ignore server session uri)
-                 ,(if async-p
-                      `(cl-flet ((send-result (result)
-                                   (funcall ,send-result-var result))
-                                 (send-error (code message &optional data)
-                                   (funcall ,send-error-var code message data)))
-                         (let ,arg-bindings
-                           ,@body))
-                    `(let ,arg-bindings
-                       (funcall ,send-result-var (progn ,@body))))))
-          ;; Static resource
-          `(progn
-             (put ',name 'emcp-resource
-                  '(:name ,uri-or-template :metadata ,metadata))
-             (defun ,name (server session ,send-result-var ,send-error-var uri)
-               ,docstring
-               (ignore server session uri)
-               ,(if async-p
-                    `(cl-flet ((send-result (result)
-                                 (funcall ,send-result-var result))
-                               (send-error (code message &optional data)
-                                 (funcall ,send-error-var code message data)))
-                       ,@body)
-                  `(funcall ,send-result-var (progn ,@body))))))))))
+(require 'emcp-core)
+(require 'emcp-uri)
 
 ;;; Info manual resource
 
@@ -215,7 +59,7 @@ MANUAL is the current manual for same-manual references."
                (setq label (match-string 2 label))
                (when (string-empty-p label) (setq label n))))
            (format "%s (%s)" label
-                   (emcp-resources--build-uri
+                   (emcp-uri--build
                     "info://{manual}/{node}"
                     `((manual . ,m) (node . ,n))))))))
    text t))
@@ -278,10 +122,10 @@ NODE may contain a cross-manual reference like \"(other)Top\"."
   (if (string-match "^(\\([^)]+\\))\\(.*\\)" node)
       (let ((m (match-string 1 node))
             (n (match-string 2 node)))
-        (emcp-resources--build-uri
+        (emcp-uri--build
          "info://{manual}/{node}"
          `((manual . ,m) (node . ,(if (string-empty-p n) "Top" n)))))
-    (emcp-resources--build-uri
+    (emcp-uri--build
      "info://{manual}/{node}"
      `((manual . ,manual) (node . ,node)))))
 
@@ -304,7 +148,7 @@ MANUAL is the current manual.  NAV is from
       (push "Menu:" lines)
       (pcase-dolist (`(,label ,m ,node) menu)
         (push (format "  %s: %s" label
-                      (emcp-resources--build-uri
+                      (emcp-uri--build
                        "info://{manual}/{node}"
                        `((manual . ,m) (node . ,node))))
               lines)))
