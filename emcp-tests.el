@@ -373,6 +373,63 @@ the full JSON-RPC response."
                                  (let ((text (alist-get 'text (aref (alist-get 'content (alist-get 'result response)) 0))))
                                    (should (string-match-p "\\[variable\\]" text)))))
 
+(defvar emcp-tests--var-target nil
+  "Scratch variable used by the get/set-variable tool tests.")
+
+(ert-deftest emcp-tests-get-variable ()
+  (let ((emcp-tests--var-target '(1 "two" 3)))
+    (emcp-tests-with-tool-response response 'emcp-tools-get-variable
+                                   '((name . "emcp-tests--var-target"))
+                                   (let ((text (alist-get 'text (aref (alist-get 'content (alist-get 'result response)) 0))))
+                                     (should (equal text "(1 \"two\" 3)"))))))
+
+(ert-deftest emcp-tests-get-variable-unbound ()
+  (emcp-tests-with-tool-response response 'emcp-tools-get-variable
+                                 '((name . "emcp-tests--definitely-not-a-variable"))
+                                 (let* ((result (alist-get 'result response))
+                                        (text (alist-get 'text (aref (alist-get 'content result) 0))))
+                                   (should (eq (alist-get 'isError result) t))
+                                   (should (string-match-p "not bound" text)))))
+
+(ert-deftest emcp-tests-set-variable-literal ()
+  (let ((emcp-tests--var-target nil))
+    (emcp-tests-with-tool-response response 'emcp-tools-set-variable
+                                   '((name . "emcp-tests--var-target")
+                                     (value . "(1 2 3)"))
+                                   (should-not (alist-get 'isError (alist-get 'result response)))
+                                   ;; `(1 2 3)' is stored as data, not evaluated
+                                   (should (equal emcp-tests--var-target '(1 2 3))))))
+
+(ert-deftest emcp-tests-set-variable-trailing-junk ()
+  (let ((emcp-tests--var-target 'before))
+    (emcp-tests-with-tool-response response 'emcp-tools-set-variable
+                                   '((name . "emcp-tests--var-target")
+                                     (value . "42 extra"))
+                                   (let* ((result (alist-get 'result response))
+                                          (text (alist-get 'text (aref (alist-get 'content result) 0))))
+                                     (should (eq (alist-get 'isError result) t))
+                                     (should (string-match-p "Trailing" text))
+                                     ;; The value must not have been set
+                                     (should (eq emcp-tests--var-target 'before))))))
+
+(ert-deftest emcp-tests-set-variable-malformed ()
+  (let ((emcp-tests--var-target 'before))
+    (emcp-tests-with-tool-response response 'emcp-tools-set-variable
+                                   '((name . "emcp-tests--var-target")
+                                     (value . "(unbalanced"))
+                                   (let ((result (alist-get 'result response)))
+                                     (should (eq (alist-get 'isError result) t))
+                                     (should (eq emcp-tests--var-target 'before))))))
+
+(ert-deftest emcp-tests-set-variable-unbound ()
+  (emcp-tests-with-tool-response response 'emcp-tools-set-variable
+                                 '((name . "emcp-tests--never-defined-var")
+                                   (value . "42"))
+                                 (let ((result (alist-get 'result response)))
+                                   (should (eq (alist-get 'isError result) t))
+                                   ;; And the symbol must not have become bound as a side effect
+                                   (should-not (boundp 'emcp-tests--never-defined-var)))))
+
 (ert-deftest emcp-tests-describe-not-found ()
   (emcp-tests-with-tool-response response 'emcp-tools-describe
                                  '((symbol . "emcp--this-does-not-exist-at-all"))

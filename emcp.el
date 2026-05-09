@@ -64,9 +64,12 @@ screenshots at will."
 
 This gives the agent additional capabilities to work with Emacs and
 inspect its current state like:
-1. Taking screenshots"
+1. Taking screenshots
+2. Reading and setting variables"
                  :include (inspect)
-                 :tools (emcp-tools-screenshot)))
+                 :tools (emcp-tools-get-variable
+                         emcp-tools-set-variable
+                         emcp-tools-screenshot)))
     (full-control . ( :description "Full control over Emacs.
 
 This allows arbitrary code evaluation protected by a user confirmation

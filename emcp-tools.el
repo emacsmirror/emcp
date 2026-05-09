@@ -275,6 +275,53 @@ Return a list of (MANUAL ENTRY NODE) triples."
       `((content . [((type . "text")
                      (text . "No matching entries found."))])))))
 
+;;; Variables
+
+(emcp-deftool emcp-tools-get-variable
+    ((name "Symbol"))
+  "Read the global default value of an Emacs variable.
+
+Returns the value's printed representation via `prin1-to-string'.
+Always returns the global default value, even for buffer-local
+variables."
+  :name "get-variable"
+  (if-let* ((sym (intern-soft name))
+            ((default-boundp sym)))
+      `((content . [((type . "text")
+                     (text . ,(prin1-to-string (default-value sym))))]))
+    `((content . [((type . "text")
+                   (text . ,(format "Variable %s is not bound." name)))])
+      (isError . t))))
+
+(emcp-deftool emcp-tools-set-variable
+    ((name "Symbol")
+     (value "New value as a Lisp literal, e.g. =42=, =\"hi\"=, =(1 2 3)=, =t=, =nil=."))
+  "Set the global default value of an Emacs variable."
+  :name "set-variable"
+  (cl-flet ((err-result (msg)
+              `((content . [((type . "text") (text . ,msg))])
+                (isError . t))))
+    (if-let* ((sym (intern-soft name))
+              ((default-boundp sym)))
+        (pcase (condition-case err
+                   (read-from-string value)
+                 (error (error-message-string err)))
+          ((and (pred stringp) msg)
+           (err-result (format "Failed to parse value: %s" msg)))
+          ((and `(,_ . ,pos) (guard (/= pos (length value))))
+           (err-result (format "Trailing characters after value at position %d." pos)))
+          (`(,form . ,_)
+           (condition-case err
+               (progn
+                 (set-default sym form)
+                 `((content . [((type . "text")
+                                (text . ,(format "Set %s to %s"
+                                                 name (prin1-to-string form))))])))
+             (error
+              (err-result (format "Failed to set: %s"
+                                  (error-message-string err)))))))
+      (err-result (format "Variable %s is not bound." name)))))
+
 ;;; Screenshot
 
 (emcp-deftool emcp-tools-screenshot ()

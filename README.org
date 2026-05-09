@@ -178,10 +178,13 @@ Capabilities for developing Emacs lisp.
 This gives the agent additional capabilities to work with Emacs and
 inspect its current state like:
 1. Taking screenshots
+2. Reading and setting variables
 
 Includes: [[#profile-inspect][=inspect=]].
 
 Tools:
+- [[#tool-get-variable][=get-variable=]]
+- [[#tool-set-variable][=set-variable=]]
 - [[#tool-screenshot][=screenshot=]]
 
 ** =full-control=
@@ -577,6 +580,20 @@ Parameters:
 - =symbol= (string) :: Name of the symbol to look up.
 - =kind= (string, optional) :: Restrict to a kind of definition ("any", "function", "command", "macro", "variable", "custom", "face", "feature" or "widget").
 
+*** =get-variable= ~(emcp-tools-get-variable)~
+:PROPERTIES:
+:CUSTOM_ID: tool-get-variable
+:END:
+
+Read the global default value of an Emacs variable.
+
+Returns the value’s printed representation via ‘prin1-to-string’.
+Always returns the global default value, even for buffer-local
+variables.
+
+Parameters:
+- =name= (string) :: Symbol
+
 *** =info-search= ~(emcp-tools-info-search)~
 :PROPERTIES:
 :CUSTOM_ID: tool-info-search
@@ -594,6 +611,17 @@ Parameters:
 :END:
 
 View screenshots of all visible Emacs frames.
+
+*** =set-variable= ~(emcp-tools-set-variable)~
+:PROPERTIES:
+:CUSTOM_ID: tool-set-variable
+:END:
+
+Set the global default value of an Emacs variable.
+
+Parameters:
+- =name= (string) :: Symbol
+- =value= (string) :: New value as a Lisp literal, e.g. =42=, ="hi"=, =(1 2 3)=, =t=, =nil=.
 # end:tools
 
 * Development
