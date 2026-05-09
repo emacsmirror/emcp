@@ -795,25 +795,44 @@ the full JSON-RPC response."
     (should (eq (plist-get session :emcp-tools-send-keys-mode) 'reject))))
 
 (ert-deftest emcp-tests-send-keys-tool-default-accept ()
-  ;; Self-insert keys land in the current buffer at call time.
-  (let ((emcp-tools-send-keys-default-policy t))
-    (with-temp-buffer
-      (emcp-tests-with-tool-response response 'emcp-tools-send-keys
-                                     '((keys . "h e l l o"))
-                                     (should-not (alist-get 'isError
-                                                            (alist-get 'result response))))
-      (should (equal (buffer-string) "hello")))))
+  ;; Self-insert keys land in the buffer of the selected window at call time.
+  (let ((emcp-tools-send-keys-default-policy t)
+        (buf (generate-new-buffer " *emcp-tests-send-keys-accept*")))
+    (unwind-protect
+        (save-window-excursion
+          (set-window-buffer (selected-window) buf)
+          (emcp-tests-with-tool-response response 'emcp-tools-send-keys
+                                         '((keys . "h e l l o"))
+                                         (should-not (alist-get 'isError
+                                                                (alist-get 'result response))))
+          (with-current-buffer buf
+            (should (equal (buffer-string) "hello"))))
+      (kill-buffer buf))))
 
 (ert-deftest emcp-tests-send-keys-tool-default-reject ()
-  (let ((emcp-tools-send-keys-default-policy nil))
-    (with-temp-buffer
-      (emcp-tests-with-tool-response response 'emcp-tools-send-keys
-                                     '((keys . "h e l l o"))
-                                     (should (eq (alist-get 'isError
-                                                            (alist-get 'result response))
-                                                 t)))
-      ;; Buffer must remain untouched on rejection
-      (should (equal (buffer-string) "")))))
+  (let ((emcp-tools-send-keys-default-policy nil)
+        (buf (generate-new-buffer " *emcp-tests-send-keys-reject*")))
+    (unwind-protect
+        (save-window-excursion
+          (set-window-buffer (selected-window) buf)
+          (emcp-tests-with-tool-response response 'emcp-tools-send-keys
+                                         '((keys . "h e l l o"))
+                                         (should (eq (alist-get 'isError
+                                                                (alist-get 'result response))
+                                                     t)))
+          ;; Buffer must remain untouched on rejection
+          (with-current-buffer buf
+            (should (equal (buffer-string) ""))))
+      (kill-buffer buf))))
+
+(ert-deftest emcp-tests-send-keys-execute-window-dead ()
+  ;; A dead target window yields an error response without executing keys.
+  (let ((response nil)
+        (win (split-window)))
+    (delete-window win)
+    (emcp-tools-send-keys--execute "h e l l o" win
+                                   (lambda (r) (setq response r)))
+    (should (eq (alist-get 'isError response) t))))
 
 ;;; Confirm buffer
 

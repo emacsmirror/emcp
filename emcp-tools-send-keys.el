@@ -120,20 +120,31 @@ Used only for logging.  The result is one of `mode' or `default'."
 
 ;;; The tool
 
-(defun emcp-tools-send-keys--execute (keys send-result)
-  "Execute KEYS and call SEND-RESULT with the MCP tool result alist."
-  (condition-case err
-      (progn
-        (execute-kbd-macro (kbd keys))
-        (funcall send-result
-                 `((content . [((type . "text")
-                                (text . ,(format "Sent: %s" keys)))]))))
-    (error
-     (funcall send-result
-              `((content . [((type . "text")
-                             (text . ,(format "Error: %s"
-                                              (error-message-string err))))])
-                (isError . t))))))
+(defun emcp-tools-send-keys--execute (keys target-window send-result)
+  "Execute KEYS in TARGET-WINDOW.
+
+SEND-RESULT receives the MCP tool result alist.  If TARGET-WINDOW is no
+longer live, send an error result without executing anything."
+  (cond
+   ((not (window-live-p target-window))
+    (funcall send-result
+             `((content . [((type . "text")
+                            (text . "Target window is no longer live."))])
+               (isError . t))))
+   (t
+    (condition-case err
+        (progn
+          (with-selected-window target-window
+            (execute-kbd-macro (kbd keys)))
+          (funcall send-result
+                   `((content . [((type . "text")
+                                  (text . ,(format "Sent: %s" keys)))]))))
+      (error
+       (funcall send-result
+                `((content . [((type . "text")
+                               (text . ,(format "Error: %s"
+                                                (error-message-string err))))])
+                  (isError . t))))))))
 
 (emcp-deftool emcp-tools-send-keys
     ((keys "Key sequence in `kbd' notation, e.g. =C-x C-f=, =M-x list-buffers RET=, or =h e l l o= for literal characters."))
@@ -153,12 +164,15 @@ responds.  Decisions are not cached, so every call prompts the user.
 Prefer a more specialized tool if available to minimize user interaction
 and decision fatigue."
   :async t
-  (let ((decision (emcp-tools-send-keys--authorize session)))
+  (let ((decision (emcp-tools-send-keys--authorize session))
+        ;; Capture now, since the confirmation buffer's `pop-to-buffer' may change the
+        ;; selected window
+        (target-window (selected-window)))
     (cl-flet ((maybe-execute (accept reason)
                 (emcp--log server session
                   (info (emcp-tools-send-keys--format-log accept reason keys)))
                 (if accept
-                    (emcp-tools-send-keys--execute keys #'send-result)
+                    (emcp-tools-send-keys--execute keys target-window #'send-result)
                   (send-result
                    `((content . [((type . "text")
                                   (text . "User rejected send-keys."))])
