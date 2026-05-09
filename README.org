@@ -3,7 +3,9 @@
 
 EMCP lets your LLM agent interact with Emacs. The agent can look up documentation and definitions, take screenshots, read buffers, execute code and more. Exactly which [[#built-in-prompts][prompts]], [[#built-in-resources][resources]] and [[#built-in-tools][tools]] are available to the agent depends on the active [[#profiles][profile]].
 
-As an MCP implementation, EMCP supports all the core server features from the [[https://modelcontextprotocol.io/specification/2025-11-25/server][2025-11-25 version of the MCP specification]] and even has (as of yet unused) facilities for server-to-client notifications and requests. Regarding actual user-facing functionality, I am adding tools etc. to the project as I need them and find a usable design for them. So while I have plans for more tools, for now only the simple ones are in the repository and more complex ones like code execution do not exist yet (even though I teased it in the previous paragraph). However, if you really want a code execution tool /right now/, EMCP has been designed to be extensible and adding it yourself is almost trivial. Just [[#custom-components][follow the instructions]].
+As an MCP implementation, EMCP supports all the core server features from the [[https://modelcontextprotocol.io/specification/2025-11-25/server][2025-11-25 version of the MCP specification]] and even has (as of yet unused) facilities for server-to-client notifications and requests.
+
+I am adding tools etc. to the project as I need them and find a usable design for them. If there is a tool missing which you really want /right now/, EMCP has been designed to be extensible and adding it yourself should be easy and even fun. Just [[#custom-components][follow the instructions]] or hand them to your agent.
 
 * Installation
 
@@ -181,6 +183,21 @@ Includes: [[#profile-inspect][=inspect=]].
 
 Tools:
 - [[#tool-screenshot][=screenshot=]]
+
+** =full-control=
+:PROPERTIES:
+:CUSTOM_ID: profile-full-control
+:END:
+
+Full control over Emacs.
+
+This allows arbitrary code evaluation protected by a user confirmation
+interface.
+
+Includes: [[#profile-inspect][=inspect=]], [[#profile-develop][=develop=]].
+
+Tools:
+- [[#tool-eval][=eval=]]
 # end:profiles
 
 * Custom MCP Components
@@ -319,13 +336,14 @@ Keyword options:
 Tool arguments support ~:type~ (a JSON schema type; defaults to ~"string"~) and ~:default~ (making the argument optional):
 
 #+begin_src emacs-lisp
-  (emcp-deftool my-tool-eval
-      ((expression "Emacs Lisp expression to evaluate"))
-    "Evaluate an Emacs Lisp expression and return the result."
-    :name "eval"
-    (let ((result (eval (read expression) t)))
+  (emcp-deftool my-tool-calc
+      ((expression "Algebraic expression to evaluate, e.g. =sqrt(2*pi)=.")
+       (precision "Number of significant digits in the result." :type "integer" :default 12))
+    "Evaluate an algebraic expression with calc."
+    :name "calc"
+    (let ((calc-internal-prec precision))
       `((content . [((type . "text")
-                     (text . ,(prin1-to-string result)))]))))
+                     (text . ,(calc-eval expression)))]))))
 #+end_src
 
 For asynchronous tools (e.g. waiting for a process or network response), pass ~:async t~. This binds ~send-result~ and ~send-error~ instead of using the return value:
@@ -368,7 +386,7 @@ Keyword options:
   (cl-flet ((format (sym)
               (let* ((meta (plist-get (get sym 'emcp-prompt) :metadata))
                      (name (alist-get 'name meta))
-                     (desc (alist-get 'description meta))
+                     (desc (documentation sym))
                      (lines (list (format "*** =%s= ~(%s)~" (concat "/" name) sym)
                                   ":PROPERTIES:"
                                   (format ":CUSTOM_ID: prompt-%s" name)
@@ -415,7 +433,7 @@ Share screenshots of all visible Emacs frames.
                      (meta (plist-get (or resource template) :metadata))
                      (name (alist-get 'name meta))
                      (uri (or (alist-get 'uri meta) (alist-get 'uriTemplate meta)))
-                     (desc (alist-get 'description meta))
+                     (desc (documentation sym))
                      (mime (alist-get 'mimeType meta))
                      (lines (list (format "*** =%s= ~(%s)~" uri sym)
                                   ":PROPERTIES:"
@@ -467,7 +485,7 @@ Read a node from an Emacs Info manual.
   (cl-flet ((format (sym)
               (let* ((meta (plist-get (get sym 'emcp-tool) :metadata))
                      (name (alist-get 'name meta))
-                     (desc (alist-get 'description meta))
+                     (desc (documentation sym))
                      (schema (alist-get 'inputSchema meta))
                      (props (alist-get 'properties schema))
                      (required (alist-get 'required schema))
@@ -514,7 +532,7 @@ Read a node from an Emacs Info manual.
 :CUSTOM_ID: tool-apropos
 :END:
 
-Search for symbols matching a regular expression, optionally restricted to a specific kind.
+Search for Emacs symbols matching a regular expression.
 
 Parameters:
 - =pattern= (string) :: Regular expression to search for
@@ -525,18 +543,35 @@ Parameters:
 :CUSTOM_ID: tool-describe
 :END:
 
-Get the documentation for a symbol.
+Describe an Emacs symbol.
 
 Parameters:
 - =symbol= (string) :: Name of the symbol to describe.
 - =kind= (string, optional) :: Restrict to a kind of definition ("any", "function", "command", "macro", "variable", "custom", "face", "feature" or "widget").
+
+*** =eval= ~(emcp-tools-eval)~
+:PROPERTIES:
+:CUSTOM_ID: tool-eval
+:END:
+
+Evaluate Emacs Lisp.
+
+To enhance the safety of letting an agent execute arbitrary code,
+every tool call goes through a layered confirmation system:
+1. If the session is in =accept= or =reject= mode, do that
+2. If that particular code has been accepted or rejected for this
+   session or permanently, do that
+3. Otherwise, show the formatted code in a buffer and ask the user
+
+Parameters:
+- =code= (string) :: Multiple top-level forms are wrapped in an implicit `progn'.
 
 *** =find-definition= ~(emcp-tools-find-definition)~
 :PROPERTIES:
 :CUSTOM_ID: tool-find-definition
 :END:
 
-Find the definition of a symbol, returning its location and source code.
+Find the source definition of an Emacs symbol.
 
 Parameters:
 - =symbol= (string) :: Name of the symbol to look up.

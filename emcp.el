@@ -43,6 +43,7 @@
 (require 'emcp-prompts)
 (require 'emcp-resources)
 (require 'emcp-tools)
+(require 'emcp-tools-eval)
 
 (defcustom emcp-profiles
   '((inspect . ( :description "Ask Emacs about itself (docs, definitions, info pages).
@@ -65,7 +66,13 @@ This gives the agent additional capabilities to work with Emacs and
 inspect its current state like:
 1. Taking screenshots"
                  :include (inspect)
-                 :tools (emcp-tools-screenshot))))
+                 :tools (emcp-tools-screenshot)))
+    (full-control . ( :description "Full control over Emacs.
+
+This allows arbitrary code evaluation protected by a user confirmation
+interface."
+                      :include (inspect develop)
+                      :tools (emcp-tools-eval))))
   "Profiles of prompts, resources and tools.
 
 :include includes the given profiles when the current one is started,
