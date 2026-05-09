@@ -97,6 +97,38 @@ See below to learn how to define your own [[#custom-prompts][prompts]], [[#custo
   (defun emcp--doc-format-link (sym)
     (format "- [[#%s][=%s=]]" (emcp--doc-id sym) (emcp--doc-display-name sym)))
 
+  (defun emcp--doc-source-line (sym)
+    "Return the 1-based line where SYM's `emcp-def*' form starts.
+
+`find-function-search-for-symbol' is unsuitable here because its
+default regex matches any `(def... SYM' form, so for symbols that also
+have a `(defgroup SYM ...)' it lands on the defgroup, not the
+`emcp-def*' macro call we want to link to."
+    (let* ((file-path (symbol-file sym 'defun))
+           (macro (cond ((get sym 'emcp-tool) "emcp-deftool")
+                        ((get sym 'emcp-prompt) "emcp-defprompt")
+                        ((or (get sym 'emcp-resource)
+                             (get sym 'emcp-resource-template))
+                         "emcp-defresource"))))
+      (with-temp-buffer
+        (insert-file-contents file-path)
+        (goto-char (point-min))
+        (re-search-forward
+         (format "^(%s %s[ \n]"
+                 (regexp-quote macro)
+                 (regexp-quote (symbol-name sym))))
+        (line-number-at-pos (match-beginning 0)))))
+
+  (defun emcp--doc-source-target (sym)
+    "Return the org-link target for SYM's source location.
+
+Uses the `./FILE::LINE' relative-path form (no `file:' prefix), which
+org-mode treats as a file link with line target and which forge org
+renderers tend to accept as a relative URL."
+    (format "./%s::%d"
+            (file-name-nondirectory (symbol-file sym 'defun))
+            (emcp--doc-source-line sym)))
+
   (cl-flet ((format-profile (entry)
               (let* ((name (car entry))
                      (profile (cdr entry))
@@ -390,8 +422,10 @@ Keyword options:
   (cl-flet ((format (sym)
               (let* ((meta (plist-get (get sym 'emcp-prompt) :metadata))
                      (name (alist-get 'name meta))
+                     (target (emcp--doc-source-target sym))
                      (desc (documentation sym))
-                     (lines (list (format "*** =%s= ~(%s)~" (concat "/" name) sym)
+                     (lines (list (format "*** =%s= [[%s][~%s~]]"
+                                          (concat "/" name) target sym)
                                   ":PROPERTIES:"
                                   (format ":CUSTOM_ID: prompt-%s" name)
                                   ":END:"
@@ -417,7 +451,7 @@ Keyword options:
 #+end_src
 
 # begin:prompts
-*** =/screenshot= ~(emcp-prompt-screenshot)~
+*** =/screenshot= [[./emcp-prompts.el::35][~emcp-prompt-screenshot~]]
 :PROPERTIES:
 :CUSTOM_ID: prompt-screenshot
 :END:
@@ -437,9 +471,11 @@ Share screenshots of all visible Emacs frames.
                      (meta (plist-get (or resource template) :metadata))
                      (name (alist-get 'name meta))
                      (uri (or (alist-get 'uri meta) (alist-get 'uriTemplate meta)))
+                     (target (emcp--doc-source-target sym))
                      (desc (documentation sym))
                      (mime (alist-get 'mimeType meta))
-                     (lines (list (format "*** =%s= ~(%s)~" uri sym)
+                     (lines (list (format "*** =%s= [[%s][~%s~]]"
+                                          uri target sym)
                                   ":PROPERTIES:"
                                   (format ":CUSTOM_ID: resource-%s" name)
                                   ":END:"
@@ -471,7 +507,7 @@ Share screenshots of all visible Emacs frames.
 #+end_src
 
 # begin:resources
-*** =info://{manual}/{node}= ~(emcp-resource-info-node)~
+*** =info://{manual}/{node}= [[./emcp-resources.el::158][~emcp-resource-info-node~]]
 :PROPERTIES:
 :CUSTOM_ID: resource-info-node
 :END:
@@ -489,11 +525,13 @@ Read a node from an Emacs Info manual.
   (cl-flet ((format (sym)
               (let* ((meta (plist-get (get sym 'emcp-tool) :metadata))
                      (name (alist-get 'name meta))
+                     (target (emcp--doc-source-target sym))
                      (desc (documentation sym))
                      (schema (alist-get 'inputSchema meta))
                      (props (alist-get 'properties schema))
                      (required (alist-get 'required schema))
-                     (lines (list (format "*** =%s= ~(%s)~" name sym)
+                     (lines (list (format "*** =%s= [[%s][~%s~]]"
+                                          name target sym)
                                   ":PROPERTIES:"
                                   (format ":CUSTOM_ID: tool-%s" name)
                                   ":END:"
@@ -531,7 +569,7 @@ Read a node from an Emacs Info manual.
 #+end_src
 
 # begin:tools
-*** =apropos= ~(emcp-tools-apropos)~
+*** =apropos= [[./emcp-tools.el::38][~emcp-tools-apropos~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-apropos
 :END:
@@ -542,7 +580,7 @@ Parameters:
 - =pattern= (string) :: Regular expression to search for
 - =kind= (string, optional) :: Restrict results to a kind of symbol ("any", "function", "command", "macro", "variable", "custom", "face", "feature" or "widget")
 
-*** =describe= ~(emcp-tools-describe)~
+*** =describe= [[./emcp-tools.el::192][~emcp-tools-describe~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-describe
 :END:
@@ -553,7 +591,7 @@ Parameters:
 - =symbol= (string) :: Name of the symbol to describe.
 - =kind= (string, optional) :: Restrict to a kind of definition ("any", "function", "command", "macro", "variable", "custom", "face", "feature" or "widget").
 
-*** =eval= ~(emcp-tools-eval)~
+*** =eval= [[./emcp-tools-eval.el::310][~emcp-tools-eval~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-eval
 :END:
@@ -570,7 +608,7 @@ every tool call goes through a layered confirmation system:
 Parameters:
 - =code= (string) :: Multiple top-level forms are wrapped in an implicit `progn'.
 
-*** =find-definition= ~(emcp-tools-find-definition)~
+*** =find-definition= [[./emcp-tools.el::149][~emcp-tools-find-definition~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-find-definition
 :END:
@@ -581,7 +619,7 @@ Parameters:
 - =symbol= (string) :: Name of the symbol to look up.
 - =kind= (string, optional) :: Restrict to a kind of definition ("any", "function", "command", "macro", "variable", "custom", "face", "feature" or "widget").
 
-*** =get-variable= ~(emcp-tools-get-variable)~
+*** =get-variable= [[./emcp-tools.el::280][~emcp-tools-get-variable~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-get-variable
 :END:
@@ -595,7 +633,7 @@ variables.
 Parameters:
 - =name= (string) :: Symbol
 
-*** =info-search= ~(emcp-tools-info-search)~
+*** =info-search= [[./emcp-tools.el::249][~emcp-tools-info-search~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-info-search
 :END:
@@ -606,14 +644,14 @@ Parameters:
 - =pattern= (string) :: Regular expression to search for in Info indices
 - =manual= (string, optional) :: Restrict search to this manual name, e.g. "elisp" or "emacs"
 
-*** =screenshot= ~(emcp-tools-screenshot)~
+*** =screenshot= [[./emcp-tools.el::327][~emcp-tools-screenshot~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-screenshot
 :END:
 
 View screenshots of all visible Emacs frames.
 
-*** =send-keys= ~(emcp-tools-send-keys)~
+*** =send-keys= [[./emcp-tools-send-keys.el::177][~emcp-tools-send-keys~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-send-keys
 :END:
@@ -629,7 +667,7 @@ guide for a future one.
 Parameters:
 - =keys= (string) :: Key sequence in `kbd' notation, e.g. =C-x C-f=, =M-x list-buffers RET=, or =h e l l o= for literal characters.
 
-*** =set-variable= ~(emcp-tools-set-variable)~
+*** =set-variable= [[./emcp-tools.el::296][~emcp-tools-set-variable~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-set-variable
 :END:
