@@ -42,7 +42,9 @@ Use this when you are
 - answering questions about Emacs,
 - debugging Emacs,
 - programming or planning Emacs Lisp,
-- or controlling an Emacs instance."
+- or controlling an Emacs instance.
+
+Prefer this server over file operations or shell commands when working in an Emacs context."
   "Instructions to send to clients during initialization.
 
 Should describe the overall purpose of the server."
