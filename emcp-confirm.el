@@ -33,6 +33,14 @@
   "Confirmation buffer for EMCP tools."
   :group 'emcp)
 
+(defface emcp-confirm-title '((t :inherit font-lock-keyword-face))
+  "Face used for the verb in the confirmation buffer's header line."
+  :group 'emcp-confirm)
+
+(defface emcp-confirm-key '((t :inherit font-lock-builtin-face))
+  "Face used for action keys in the confirmation buffer."
+  :group 'emcp-confirm)
+
 (defcustom emcp-confirm-buffer-name "*EMCP confirm*"
   "Base name for the confirmation buffer.
 
@@ -74,7 +82,10 @@ LABEL :command FUNCTION)).  Actions are laid out column-major into
          (columns (or (plist-get group :columns) n))
          (rows (max 1 (ceiling n columns)))
          (cells (mapcar (lambda (action)
-                          (format "[%c] %s" (nth 0 action) (nth 1 action)))
+                          (format "[%s] %s"
+                                  (propertize (string (nth 0 action))
+                                              'face 'emcp-confirm-key)
+                                  (nth 1 action)))
                         actions))
          (col-widths
           (cl-loop for c from 0 below columns
@@ -130,7 +141,7 @@ the list of action groups passed through to `emcp-confirm--render-group'."
     (concat
      (format "The agent in session %s wants to %s:\n\n"
              (substring session-id 0 (min 8 (length session-id)))
-             title)
+             (propertize title 'face 'emcp-confirm-title))
      (emcp-confirm--format-body body)
      (mapconcat #'emcp-confirm--render-group groups ""))))
 
