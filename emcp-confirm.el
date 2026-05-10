@@ -218,6 +218,7 @@ Returns the buffer."
       (emcp-confirm-mode)
       (let ((inhibit-read-only t))
         (insert (emcp-confirm--render session title body groups)))
+      (goto-char (point-min))
       (use-local-map (emcp-confirm--build-keymap groups))
       (setq emcp-confirm--pending
             (list :session session :context context
