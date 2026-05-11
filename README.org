@@ -46,7 +46,7 @@ To use EMCP in non-Emacs clients, set ~emcp-http-port~ to a number of your choic
 
 Then start EMCP with =M-x emcp-start= and register the server with your client, for example =claude mcp add --transport http emcp http://127.0.0.1:38913/mcp=.
 
-* Commands
+* Usage
 
 The agent-shell setup above is the preferred way to use EMCP and does not require any other commands.
 
