@@ -52,6 +52,13 @@ The agent-shell setup above is the preferred way to use EMCP and does not requir
 
 For other cases, call ~emcp-start~ interactively, which asks for a profile and places the server URL on the kill-ring. ~emcp-stop~, ~emcp-restart~ and ~emcp-reload~ do what you would expect them to do and are useful when you develop [[#custom-components][your own MCP components]] or custom profiles.
 
+** Safety
+
+Tools that allow agents to execute arbitrary code, e.g. through code evaluation or sending key presses, will by default display a confirmation buffer to the user. In this buffer, the user can inspect the code or key presses and accept or reject the execution.
+
+#+caption: A confirmation dialog to verify code before execution
+[[./media/confirmation.webp]]
+
 * Profiles
 :PROPERTIES:
 :CUSTOM_ID: profiles
