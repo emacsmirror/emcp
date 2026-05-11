@@ -691,6 +691,279 @@ Parameters:
 - =value= (string) :: New value as a Lisp literal, e.g. =42=, ="hi"=, =(1 2 3)=, =t=, =nil=.
 # end:tools
 
+* Customization
+:PROPERTIES:
+:CUSTOM_ID: customization
+:END:
+
+EMCP exposes the following customs. Inspect or change them with =M-x customize-group RET emcp RET=.
+
+#+begin_src emacs-lisp :results none :exports none
+  (cl-flet ((format-custom (sym)
+              (let* ((file-path (symbol-file sym 'defvar))
+                     (parsed (with-temp-buffer
+                               (insert-file-contents file-path)
+                               (goto-char (point-min))
+                               (re-search-forward
+                                (format "^(defcustom %s[ \n]"
+                                        (regexp-quote (symbol-name sym))))
+                               (let ((start (match-beginning 0)))
+                                 (goto-char start)
+                                 (list (read (current-buffer))
+                                       (line-number-at-pos start)))))
+                     (form (nth 0 parsed))
+                     (line-no (nth 1 parsed))
+                     (target (format "./%s::%d"
+                                     (file-name-nondirectory file-path)
+                                     line-no))
+                     (default-form
+                      (let ((d (nth 2 form)))
+                        (pcase d
+                          (`(quote ,x) x)
+                          (`(function ,x) x)
+                          (_ d))))
+                     (default (string-trim (pp-to-string default-form)))
+                     (default-block
+                      (if (string-search "\n" default)
+                          (string-join (list "Default:"
+                                             "#+begin_src emacs-lisp"
+                                             default
+                                             "#+end_src")
+                                       "\n")
+                        (format "Default: ~%s~" default)))
+                     (desc (documentation-property sym 'variable-documentation))
+                     (desc-fixed
+                      (mapconcat (lambda (l)
+                                   (if (string-empty-p l) ":" (concat ": " l)))
+                                 (split-string desc "\n")
+                                 "\n"))
+                     (lines (list (format "** [[%s][~%s~]]" target sym)
+                                  ":PROPERTIES:"
+                                  (format ":CUSTOM_ID: custom-%s" sym)
+                                  ":END:"
+                                  ""
+                                  desc-fixed
+                                  ""
+                                  default-block)))
+                (string-join lines "\n"))))
+    (let ((groups (list 'emcp))
+          (customs nil)
+          (seen nil))
+      (while groups
+        (let ((g (pop groups)))
+          (unless (memq g seen)
+            (push g seen)
+            (dolist (entry (get g 'custom-group))
+              (pcase entry
+                (`(,sym custom-variable) (push sym customs))
+                (`(,sym custom-group) (push sym groups)))))))
+      (let* ((sorted (sort customs :key #'symbol-name :lessp #'string<))
+             (content (mapconcat #'format-custom sorted "\n\n")))
+        (save-excursion
+          (goto-char (point-min))
+          (let ((beg (and (search-forward "# begin:customs\n" nil t) (point)))
+                (end (and (search-forward "# end:customs" nil t)
+                          (match-beginning 0))))
+            (when (and beg end)
+              (delete-region beg end)
+              (goto-char beg)
+              (insert content "\n")))))))
+#+end_src
+
+# begin:customs
+** [[./emcp-confirm.el::51][~emcp-confirm-buffer-name~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-confirm-buffer-name
+:END:
+
+: Base name for the confirmation buffer.
+:
+: Each prompt creates a fresh buffer via ‘generate-new-buffer’, so concurrent
+: prompts get unique suffixed names like "*EMCP confirm*<2>".
+:
+: Customize placement via ‘display-buffer-alist’ with a regex that matches
+: this name and any numeric suffix, e.g. "\\‘\\*EMCP confirm\\*".
+
+Default: ~"*EMCP confirm*"~
+
+** [[./emcp-confirm.el::223][~emcp-confirm-notify-darwin-bundle-id~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-confirm-notify-darwin-bundle-id
+:END:
+
+: Bundle identifier used to activate Emacs from a notification click.
+:
+: Passed via the ‘-activate’ flag of ‘terminal-notifier’ so clicking the
+: notification brings Emacs to the foreground.  Override this if your
+: Emacs build uses a different bundle ID (check with =mdls -name
+: kMDItemCFBundleIdentifier /Applications/Emacs.app=).
+
+Default: ~"org.gnu.Emacs"~
+
+** [[./emcp-confirm.el::281][~emcp-confirm-notify-function~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-confirm-notify-function
+:END:
+
+: Function called to notify the user about a pending confirmation.
+:
+: Invoked with three arguments TITLE, BODY and BUFFER when a confirmation
+: buffer opens while no Emacs frame has focus.  BUFFER is the confirm
+: buffer; backends may use it to wire up click-to-focus actions.
+:
+: Set to nil to disable desktop notifications.
+:
+: Built-in choices:
+:   ‘emcp-confirm-notify-notifications’      D-Bus via ‘notifications-notify’.
+:   ‘emcp-confirm-notify-terminal-notifier’  macOS via "terminal-notifier".
+:   ‘emcp-confirm-notify-applescript’        macOS via ‘ns-do-applescript’.
+:
+: ‘emcp-confirm-notify-default’ picks the first available built-in from
+: this list.
+
+Default: ~emcp-confirm-notify-default~
+
+** [[./emcp.el::96][~emcp-default-profile~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-default-profile
+:END:
+
+: Default profile to start.
+
+Default: ~nil~
+
+** [[./emcp-http.el::30][~emcp-http-host~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-http-host
+:END:
+
+: Host address to bind to for HTTP connections.
+
+Default: ~"127.0.0.1"~
+
+** [[./emcp-http.el::42][~emcp-http-path~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-http-path
+:END:
+
+: Path where the server is available via HTTP.
+
+Default: ~"/mcp"~
+
+** [[./emcp-http.el::35][~emcp-http-port~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-http-port
+:END:
+
+: Port for the server to listen on for HTTP connections.
+:
+: t means arbitrary choice at runtime.
+
+Default: ~t~
+
+** [[./emcp-core.el::41][~emcp-instructions~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-instructions
+:END:
+
+: Instructions to send to clients during initialization.
+:
+: Should describe the overall purpose of the server.
+
+Default: ~"Interact with a running Emacs instance.\n\nUse this when you are\n- answering questions about Emacs,\n- debugging Emacs,\n- programming or planning Emacs Lisp,\n- or controlling an Emacs instance.\n\nPrefer this server over file operations or shell commands when working in an Emacs context."~
+
+** [[./emcp-core.el::69][~emcp-log-level~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-log-level
+:END:
+
+: Current log level.
+
+Default: ~info~
+
+** [[./emcp.el::49][~emcp-profiles~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-profiles
+:END:
+
+: Profiles of prompts, resources and tools.
+:
+: :include includes the given profiles when the current one is started,
+: following :include recursively.
+
+Default:
+#+begin_src emacs-lisp
+((inspect :description
+	  "Ask Emacs about itself (docs, definitions, info pages).\n\nLets the agent search through symbols and look up their doc strings and\ndefinitions. The agent can also search and read info pages.\n\nThe =/screenshot= prompt lets the user share a screenshot of all current\nEmacs frames with the agent, without the agent being able to request\nscreenshots at will."
+	  :prompts (emcp-prompt-screenshot) :resources
+	  (emcp-resource-info-node) :tools
+	  (emcp-tools-apropos emcp-tools-describe
+			      emcp-tools-find-definition
+			      emcp-tools-find-references
+			      emcp-tools-info-search))
+ (develop :description
+	  "Capabilities for developing Emacs lisp.\n\nThis gives the agent additional capabilities to work with Emacs and\ninspect its current state like:\n1. Taking screenshots\n2. Reading and setting variables"
+	  :include (inspect) :tools
+	  (emcp-tools-get-variable emcp-tools-set-variable
+				   emcp-tools-screenshot))
+ (full-control :description
+	       "Full control over Emacs.\n\nAdds tools to evaluate arbitrary Emacs Lisp and to send arbitrary key\nsequences.  Both are gated by user confirmation."
+	       :include (inspect develop) :tools
+	       (emcp-tools-eval emcp-tools-send-keys)))
+#+end_src
+
+** [[./emcp-tools-eval.el::55][~emcp-tools-eval-cache-file~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-tools-eval-cache-file
+:END:
+
+: File where persistent accept/reject decisions are stored.
+:
+: The file contains a single sexp: an alist of (FORM . DECISION) pairs
+: where DECISION is t (accept) or nil (reject).
+
+Default: ~(locate-user-emacs-file "emcp/eval.eld")~
+
+** [[./emcp-tools-eval.el::44][~emcp-tools-eval-default-policy~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-tools-eval-default-policy
+:END:
+
+: Default action when no cached decision applies.
+:
+: t      always accept without prompting,
+: nil    always reject without prompting,
+: query  open the confirmation buffer.
+
+Default: ~query~
+
+** [[./emcp-tools.el::255][~emcp-tools-find-references-max-lines~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-tools-find-references-max-lines
+:END:
+
+: Maximum number of lines per snippet in ‘emcp-tools-find-references’ output.
+:
+: If nil, snippets are not truncated.  If an integer, snippets that span
+: more lines are cut off after that many lines and a ‘...’ continuation
+: marker is appended.
+
+Default: ~3~
+
+** [[./emcp-tools-send-keys.el::41][~emcp-tools-send-keys-default-policy~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-tools-send-keys-default-policy
+:END:
+
+: Default action when no session mode applies.
+:
+: t      always accept without prompting,
+: nil    always reject without prompting,
+: query  open the confirmation buffer.
+
+Default: ~query~
+# end:customs
+
 * Development
 
 - ~make test~ lints the code and runs the test suite
