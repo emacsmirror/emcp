@@ -362,6 +362,82 @@ the full JSON-RPC response."
     (let ((text (alist-get 'text (aref (alist-get 'content (alist-get 'result response)) 0))))
       (should (string-match-p "No definition found" text)))))
 
+(defun emcp-tests--emcp-source-files ()
+  "Return the paths of some EMCP source files."
+  (mapcar #'find-library-name
+          '("emcp" "emcp-core" "emcp-confirm" "emcp-http" "emcp-prompts")))
+
+(defmacro emcp-tests-with-emcp-refs-scope (&rest body)
+  "Run BODY with `elisp-refs--loaded-paths' restricted to a subset of EMCP.
+
+Scanning every file in `load-history' makes `find-references' tests
+slow.  Restricting the search to emcp's files brings runtime down from
+seconds to milliseconds while still exercising the same code paths."
+  (declare (indent 0) (debug (body)))
+  `(cl-letf (((symbol-function 'elisp-refs--loaded-paths)
+              #'emcp-tests--emcp-source-files))
+     ,@body))
+
+(ert-deftest emcp-tests-find-references-function ()
+  ;; "function" kind matches call sites and skips the symbol's own `defun'
+  ;; definition.
+  (emcp-tests-with-emcp-refs-scope
+    (emcp-tests-with-tool-response response 'emcp-tools-find-references
+                                   '((symbol . "emcp--server-stop") (kind . "function"))
+      (let* ((result (alist-get 'result response))
+             (text (alist-get 'text (aref (alist-get 'content result) 0))))
+        (should-not (alist-get 'isError result))
+        (should (string-match-p "(emcp--server-stop " text))
+        (should-not (string-match-p "(defun emcp--server-stop" text))))))
+
+(ert-deftest emcp-tests-find-references-any ()
+  ;; "any" kind matches every occurrence regardless of syntactic position, so
+  ;; it includes the `defun' definition line that "function" skips.
+  (emcp-tests-with-emcp-refs-scope
+    (emcp-tests-with-tool-response response 'emcp-tools-find-references
+                                   '((symbol . "emcp--server-stop"))
+      (let* ((result (alist-get 'result response))
+             (text (alist-get 'text (aref (alist-get 'content result) 0))))
+        (should-not (alist-get 'isError result))
+        (should (string-match-p "(defun emcp--server-stop" text))))))
+
+(ert-deftest emcp-tests-find-references-max-lines ()
+  ;; emcp--server-build is called with a multi-line argument list in emcp.el,
+  ;; so the un-capped snippet spans several lines.  With the limit set to 1,
+  ;; only the first line is kept and a continuation marker is appended after
+  ;; the first line of the matched form.
+  (let ((emcp-tools-find-references-max-lines 1))
+    (emcp-tests-with-emcp-refs-scope
+      (emcp-tests-with-tool-response response 'emcp-tools-find-references
+                                     '((symbol . "emcp--server-build") (kind . "function"))
+        (let* ((result (alist-get 'result response))
+               (text (alist-get 'text (aref (alist-get 'content result) 0))))
+          (should-not (alist-get 'isError result))
+          (should (string-match-p
+                   "(emcp--server-build :name[^\n]*\n\\.\\.\\."
+                   text)))))))
+
+(ert-deftest emcp-tests-find-references-not-found ()
+  (emcp-tests-with-emcp-refs-scope
+    (emcp-tests-with-tool-response response 'emcp-tools-find-references
+                                   '((symbol . "emcp--this-does-not-exist-at-all"))
+      (let* ((result (alist-get 'result response))
+             (text (alist-get 'text (aref (alist-get 'content result) 0))))
+        (should (eq (alist-get 'isError result) t))
+        (should (string-match-p "No symbol named" text))))))
+
+(ert-deftest emcp-tests-find-references-no-matches ()
+  ;; A bound symbol that nothing references.
+  (let ((sym (make-symbol "emcp-tests--orphan-but-interned")))
+    (intern (symbol-name sym))
+    (emcp-tests-with-emcp-refs-scope
+      (emcp-tests-with-tool-response response 'emcp-tools-find-references
+                                     `((symbol . ,(symbol-name sym)))
+        (let* ((result (alist-get 'result response))
+               (text (alist-get 'text (aref (alist-get 'content result) 0))))
+          (should-not (alist-get 'isError result))
+          (should (string-match-p "No references to" text)))))))
+
 (ert-deftest emcp-tests-describe-function ()
   (emcp-tests-with-tool-response response 'emcp-tools-describe
                                  '((symbol . "emcp--server-stop") (kind . "function"))

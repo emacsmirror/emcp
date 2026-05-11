@@ -26,6 +26,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'elisp-refs)
 (require 'find-func)
 (require 'info)
 (require 'lisp-mnt)
@@ -188,6 +189,124 @@ found."
              `((content . ,(vconcat (mapcar #'format-def results))))
            `((content . [((type . "text")
                           (text . ,(format "No definition found for %s." symbol)))]))))))))
+
+(defun emcp-tools--find-references-match-fn (kind sym)
+  "Return a function matching references to SYM in a buffer for KIND.
+
+The returned function takes a buffer and returns a list of \(_ START END)
+matches as in `elisp-refs--read-and-find'."
+  (pcase kind
+    ((or "function" "command")
+     (lambda (buf) (elisp-refs--read-and-find buf sym #'elisp-refs--function-p)))
+    ("macro"
+     (lambda (buf) (elisp-refs--read-and-find buf sym #'elisp-refs--macro-p)))
+    ((or "variable" "custom")
+     (lambda (buf) (elisp-refs--read-and-find buf sym #'elisp-refs--variable-p)))
+    (_
+     (lambda (buf) (elisp-refs--read-and-find-symbol buf sym)))))
+
+(defun emcp-tools--ref-snippet (buf start-pos end-pos)
+  "Return (LINE . SOURCE) for the reference at START-POS to END-POS in BUF.
+
+LINE is the 1-based line number of START-POS.  SOURCE is the buffer
+content from the start of the line at START-POS to the end of the line
+at END-POS."
+  (with-current-buffer buf
+    (save-excursion
+      (goto-char start-pos)
+      (let* ((line (line-number-at-pos))
+             (line-start (line-beginning-position))
+             (line-end (progn (goto-char end-pos) (line-end-position))))
+        (cons line (buffer-substring-no-properties line-start line-end))))))
+
+(defun emcp-tools--unindent (source)
+  "Rigidly unindent SOURCE so its first line begins at column 0.
+
+The leading whitespace of the first line is stripped from every line
+that begins with the same prefix, preserving relative indentation."
+  (if (string-match "\\`\\([ \t]+\\)" source)
+      (replace-regexp-in-string
+       (concat "^" (regexp-quote (match-string 1 source)))
+       "" source)
+    source))
+
+(defun emcp-tools--cap-lines (source max-lines)
+  "Truncate SOURCE to at most MAX-LINES lines.
+
+If MAX-LINES is nil, return SOURCE unchanged.  Otherwise, if SOURCE has
+more than MAX-LINES lines, return the first MAX-LINES lines followed by
+a `...' continuation marker on its own line."
+  (if (not max-lines)
+      source
+    (let ((lines (split-string source "\n")))
+      (if (<= (length lines) max-lines)
+          source
+        (concat (mapconcat #'identity (seq-take lines max-lines) "\n")
+                "\n...")))))
+
+(defun emcp-tools--format-ref (line source max-lines)
+  "Format a single reference at LINE with SOURCE snippet.
+
+When MAX-LINES is non-nil, the snippet is truncated to at most that
+many lines."
+  (format "%d: %s" line
+          (emcp-tools--cap-lines (emcp-tools--unindent source) max-lines)))
+
+(defcustom emcp-tools-find-references-max-lines 3
+  "Maximum number of lines per snippet in `emcp-tools-find-references' output.
+
+If nil, snippets are not truncated.  If an integer, snippets that span
+more lines are cut off after that many lines and a `...' continuation
+marker is appended."
+  :group 'emcp
+  :type '(choice (const :tag "No limit" nil)
+                 (integer :tag "Maximum lines")))
+
+(emcp-deftool emcp-tools-find-references
+    ((symbol "Name of the symbol to look up.")
+     (kind "Restrict to a kind of reference (\"any\", \"function\", \"command\", \"macro\", \"variable\", \"custom\", \"face\", \"feature\" or \"widget\")."
+           :default "any"))
+  "Find references to an Emacs symbol in all loaded elisp files."
+  :name "find-references"
+  (if-let* ((sym (intern-soft symbol)))
+      (let* ((match-fn (emcp-tools--find-references-match-fn kind sym))
+             (paths (elisp-refs--loaded-paths))
+             (bufs (mapcar #'elisp-refs--contents-buffer paths))
+             (elisp-refs-verbose nil))
+        (unwind-protect
+            (let* ((forms-and-bufs (elisp-refs--search-1 bufs match-fn))
+                   (per-file
+                    (mapcar
+                     (lambda (entry)
+                       (pcase-let* ((`(,matches . ,buf) entry)
+                                    (path (with-current-buffer buf
+                                            elisp-refs--path)))
+                         (cons (abbreviate-file-name path)
+                               (mapcar (lambda (m)
+                                         (pcase-let ((`(,_ ,start ,end) m))
+                                           (emcp-tools--ref-snippet buf start end)))
+                                       matches))))
+                     forms-and-bufs)))
+              (if (null per-file)
+                  `((content . [((type . "text")
+                                 (text . ,(format "No references to %s." symbol)))]))
+                (let ((text (mapconcat
+                             (lambda (entry)
+                               (let ((path (car entry))
+                                     (refs (cdr entry)))
+                                 (concat path "\n"
+                                         (mapconcat
+                                          (lambda (ref)
+                                            (emcp-tools--format-ref
+                                             (car ref) (cdr ref)
+                                             emcp-tools-find-references-max-lines))
+                                          refs "\n"))))
+                             per-file "\n\n")))
+                  `((content . [((type . "text") (text . ,text))])))))
+          (dolist (buf bufs) (kill-buffer buf))))
+    `((content . [((type . "text")
+                   (text . ,(format "No symbol named %s." symbol)))])
+      (isError . t))))
 
 (emcp-deftool emcp-tools-describe
     ((symbol "Name of the symbol to describe.")

@@ -4,7 +4,7 @@
 ;; URL: https://codeberg.org/martenlienen/emcp
 ;; Keywords: maint
 ;; Package-Version: 0.1.0
-;; Package-Requires: ((emacs "30.1") (http-server "0.1.0"))
+;; Package-Requires: ((emacs "30.1") (http-server "0.1.0") (elisp-refs "1.6"))
 
 ;;; License
 
@@ -60,6 +60,7 @@ screenshots at will."
                  :tools (emcp-tools-apropos
                          emcp-tools-describe
                          emcp-tools-find-definition
+                         emcp-tools-find-references
                          emcp-tools-info-search)))
     (develop . ( :description "Capabilities for developing Emacs lisp.
 

@@ -4,9 +4,13 @@ EL_FILES = emcp-uri.el emcp-core.el emcp-confirm.el emcp-http.el emcp-prompts.el
 
 LOAD_PATH="(progn \
   (require 'package) \
+  (add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\")) \
   (package-initialize) \
   (unless (package-installed-p 'http-server) \
     (package-vc-install \"https://codeberg.org/martenlienen/http-server.el.git\")) \
+  (unless (package-installed-p 'elisp-refs) \
+    (unless package-archive-contents (package-refresh-contents)) \
+    (package-install 'elisp-refs)) \
   (add-to-list 'load-path default-directory))"
 
 .PHONY: test lint byte-compile checkdoc docs clean
