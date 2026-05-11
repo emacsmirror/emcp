@@ -184,15 +184,15 @@ font-lock of its own) renders directly."
     (font-lock-ensure)
     (buffer-string)))
 
-(defun emcp-tools-eval--prompt (session form callback)
-  "Open the confirmation buffer for SESSION and FORM.
+(defun emcp-tools-eval--prompt (server session form callback)
+  "Open the confirmation buffer for SERVER, SESSION and FORM.
 
 CALLBACK is invoked with a t or nil decision after the user picks an
 action."
   (let* ((pretty (string-trim (pp-to-string form)))
          (code (emcp-tools-eval--fontify-elisp pretty)))
     (emcp-confirm-prompt
-     :session session
+     server session
      :title "evaluate"
      :body code
      :context (list :code code)
@@ -293,7 +293,7 @@ and decision fatigue."
           (pcase decision
             ('prompt
              (emcp-tools-eval--prompt
-              session form
+              server session form
               (lambda (d) (maybe-eval d 'user))))
             (_
              (maybe-eval decision (emcp-tools-eval--decision-source session form))))))

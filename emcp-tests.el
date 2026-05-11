@@ -983,10 +983,11 @@ seconds to milliseconds while still exercising the same code paths."
   ;; path's `--pending'-clearing: if the kill-buffer-hook fired again, the
   ;; callback would be invoked twice.
   (let* ((calls nil)
-         (cb (lambda (r) (push r calls))))
+         (cb (lambda (r) (push r calls)))
+         (emcp-confirm-notify-function nil))
     (cl-letf (((symbol-function 'pop-to-buffer) #'ignore))
       (let ((buf (emcp-confirm-prompt
-                  :session '(:id "test-session")
+                  nil '(:id "test-session")
                   :title "do thing"
                   :body "thing"
                   :on-dismiss 'no-once
@@ -1004,10 +1005,11 @@ seconds to milliseconds while still exercising the same code paths."
   (let* ((calls nil)
          (cmd-runs 0)
          (cmd (lambda () (interactive) (cl-incf cmd-runs)))
-         (cb (lambda (r) (push r calls))))
+         (cb (lambda (r) (push r calls)))
+         (emcp-confirm-notify-function nil))
     (cl-letf (((symbol-function 'pop-to-buffer) #'ignore))
       (let ((buf (emcp-confirm-prompt
-                  :session '(:id "test")
+                  nil '(:id "test")
                   :title "do thing"
                   :body "thing"
                   :groups `((:actions ((?w "Aux" :command ,cmd))))
@@ -1023,10 +1025,11 @@ seconds to milliseconds while still exercising the same code paths."
   ;; Killing the buffer without picking a :result action invokes the
   ;; callback with the :on-dismiss symbol.
   (let* ((calls nil)
-         (cb (lambda (r) (push r calls))))
+         (cb (lambda (r) (push r calls)))
+         (emcp-confirm-notify-function nil))
     (cl-letf (((symbol-function 'pop-to-buffer) #'ignore))
       (let ((buf (emcp-confirm-prompt
-                  :session '(:id "test")
+                  nil '(:id "test")
                   :title "do thing"
                   :body ""
                   :on-dismiss 'no-once

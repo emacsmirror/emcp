@@ -74,8 +74,8 @@ May mutate SESSION to record a session mode."
     ('mode-accept (plist-put session :emcp-tools-send-keys-mode 'accept) t)
     ('mode-reject (plist-put session :emcp-tools-send-keys-mode 'reject) nil)))
 
-(defun emcp-tools-send-keys--prompt (session keys callback)
-  "Open the confirmation buffer for SESSION and KEYS.
+(defun emcp-tools-send-keys--prompt (server session keys callback)
+  "Open the confirmation buffer for SERVER, SESSION and KEYS.
 
 CALLBACK is invoked with a t or nil decision after the user picks an
 action.
@@ -83,7 +83,7 @@ action.
 Customize placement of the confirmation buffer by adding an entry for
 `emcp-confirm-buffer-name' to `display-buffer-alist'."
   (emcp-confirm-prompt
-   :session session
+   server session
    :title "send the keys"
    :body keys
    :on-dismiss 'no-once
@@ -180,7 +180,7 @@ and decision fatigue."
       (pcase decision
         ('prompt
          (emcp-tools-send-keys--prompt
-          session keys
+          server session keys
           (lambda (d) (maybe-execute d 'user))))
         (_
          (maybe-execute decision (emcp-tools-send-keys--decision-source session)))))))

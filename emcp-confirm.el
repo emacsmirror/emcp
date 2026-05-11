@@ -27,6 +27,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'seq)
 (require 'subr-x)
 
 (require 'emcp-core)
@@ -61,9 +62,10 @@ this name and any numeric suffix, e.g. \"\\\\`\\\\*EMCP confirm\\\\*\"."
 (defvar-local emcp-confirm--pending nil
   "Plist of the buffer's pending request.
 
-Keys: :session SESSION :context CONTEXT :callback CB :on-dismiss SYM.
-Set to nil by `emcp-confirm--dispatch' before invoking the callback, so
-the buffer-local `kill-buffer-hook' is a no-op on the decision path.")
+Keys: :server SERVER :session SESSION :context CONTEXT :callback CB
+:on-dismiss SYM.  Set to nil by `emcp-confirm--dispatch' before invoking
+the callback, so the buffer-local `kill-buffer-hook' is a no-op on the
+decision path.")
 
 (define-derived-mode emcp-confirm-mode special-mode "EMCP-confirm"
   "Major mode for EMCP confirmation buffers."
@@ -193,11 +195,138 @@ instead of hanging."
     (setq emcp-confirm--pending nil)
     (funcall callback (plist-get pending :on-dismiss))))
 
-(cl-defun emcp-confirm-prompt (&key session title body context groups
-                                    on-dismiss callback)
+;;; Desktop notifications
+
+(declare-function notifications-notify "notifications")
+
+(defun emcp-confirm--focus-buffer-frame (buffer)
+  "Raise and focus the frame displaying BUFFER, if any."
+  (when (buffer-live-p buffer)
+    (when-let* ((win (get-buffer-window buffer t))
+                (frame (window-frame win)))
+      (raise-frame frame)
+      (select-frame-set-input-focus frame))))
+
+(defun emcp-confirm-notify-notifications (title body buffer)
+  "Display a notification via the Freedesktop D-Bus notification service.
+
+Uses Emacs's built-in `notifications-notify'.  TITLE and BODY are the
+notification title and message text.  Clicking the notification (or its
+\"Show\" action) raises and focuses the frame displaying BUFFER, if it
+is still alive."
+  (notifications-notify
+   :title title :body body :app-name "EMCP"
+   :actions '("default" "Show")
+   :on-action (lambda (_id _key)
+                (emcp-confirm--focus-buffer-frame buffer))))
+
+(defcustom emcp-confirm-notify-darwin-bundle-id "org.gnu.Emacs"
+  "Bundle identifier used to activate Emacs from a notification click.
+
+Passed via the `-activate' flag of `terminal-notifier' so clicking the
+notification brings Emacs to the foreground.  Override this if your
+Emacs build uses a different bundle ID (check with =mdls -name
+kMDItemCFBundleIdentifier /Applications/Emacs.app=)."
+  :group 'emcp-confirm
+  :type 'string)
+
+(defun emcp-confirm-notify-terminal-notifier (title body _buffer)
+  "Display a notification via the macOS \"terminal-notifier\" CLI.
+
+TITLE and BODY are the notification title and message text.  Clicking
+the notification activates Emacs (bundle ID
+`emcp-confirm-notify-darwin-bundle-id').  BUFFER is unused because
+terminal-notifier only supports app-level activation, not per-frame
+focus.
+
+Install the tool with =brew install terminal-notifier=."
+  (call-process "terminal-notifier" nil 0 nil
+                "-title" title
+                "-message" body
+                "-activate" emcp-confirm-notify-darwin-bundle-id))
+
+(declare-function ns-do-applescript "nsfns.m")
+
+(defun emcp-confirm-notify-applescript (title body _buffer)
+  "Display a notification on macOS via AppleScript.
+
+Uses the built-in `ns-do-applescript' available in Cocoa Emacs.  TITLE
+and BODY are the notification title and message text.  BUFFER is ignored
+because macOS \"display notification\" does not support click actions;
+switch to `emcp-confirm-notify-terminal-notifier' for click-to-focus."
+  (cl-flet ((quote-str (str)
+              (concat "\""
+                      (replace-regexp-in-string "[\\\"]" "\\\\\\&" str)
+                      "\"")))
+    (ns-do-applescript
+     (format "display notification %s with title %s"
+             (quote-str body)
+             (quote-str title)))))
+
+(defun emcp-confirm-notify-default (title body buffer)
+  "Forward TITLE, BODY and BUFFER to an available built-in backend.
+
+On macOS, prefer \"terminal-notifier\" when installed because clicks
+activate Emacs; otherwise fall back to the AppleScript bridge.  On
+other systems with D-Bus available, use `notifications-notify'.  If no
+backend is available, do nothing."
+  (cond
+   ((and (featurep 'dbusbind) (require 'notifications nil t))
+    (emcp-confirm-notify-notifications title body buffer))
+   ((and (eq system-type 'darwin) (executable-find "terminal-notifier"))
+    (emcp-confirm-notify-terminal-notifier title body buffer))
+   ((and (eq system-type 'darwin) (fboundp 'ns-do-applescript))
+    (emcp-confirm-notify-applescript title body buffer))))
+
+(defcustom emcp-confirm-notify-function #'emcp-confirm-notify-default
+  "Function called to notify the user about a pending confirmation.
+
+Invoked with three arguments TITLE, BODY and BUFFER when a confirmation
+buffer opens while no Emacs frame has focus.  BUFFER is the confirm
+buffer; backends may use it to wire up click-to-focus actions.
+
+Set to nil to disable desktop notifications.
+
+Built-in choices:
+  `emcp-confirm-notify-notifications'      D-Bus via `notifications-notify'.
+  `emcp-confirm-notify-terminal-notifier'  macOS via \"terminal-notifier\".
+  `emcp-confirm-notify-applescript'        macOS via `ns-do-applescript'.
+
+`emcp-confirm-notify-default' picks the first available built-in from
+this list."
+  :group 'emcp-confirm
+  :type '(choice (const :tag "Disabled" nil)
+                 (function :tag "Notification function")))
+
+(defun emcp-confirm--emacs-focused-p ()
+  "Return non-nil if any Emacs frame currently has focus."
+  (seq-some #'frame-focus-state (frame-list)))
+
+(defun emcp-confirm--maybe-notify (server session title buffer)
+  "Notify the user if Emacs is unfocused and a notifier is configured.
+
+SERVER, SESSION and TITLE are the values passed to `emcp-confirm-prompt'.
+BUFFER is the confirm buffer; backends may use it to wire up click
+actions that focus the frame displaying it."
+  (when (and emcp-confirm-notify-function
+             (not (emcp-confirm--emacs-focused-p)))
+    (condition-case err
+        (funcall emcp-confirm-notify-function
+                 "EMCP confirmation"
+                 (format "%s wants to %s"
+                         (emcp--session-label session)
+                         title)
+                 buffer)
+      (error
+       (emcp--log server session
+         (warning (format "Notification failed: %s"
+                          (error-message-string err))))))))
+
+(cl-defun emcp-confirm-prompt (server session &key title body context groups
+                                      on-dismiss callback)
   "Open the confirmation buffer to ask the user about a tool call.
 
-SESSION is the MCP session plist.
+SERVER is the MCP server struct and SESSION is the MCP session plist.
 
 TITLE is the verb that completes \"The agent in session ID wants to TITLE:\".
 
@@ -236,12 +365,13 @@ Returns the buffer."
       (goto-char (point-min))
       (use-local-map (emcp-confirm--build-keymap groups))
       (setq emcp-confirm--pending
-            (list :session session :context context
+            (list :server server :session session :context context
                   :on-dismiss on-dismiss :callback callback))
       (add-hook 'kill-buffer-hook #'emcp-confirm--on-kill nil t))
     (pop-to-buffer buf '((display-buffer-in-side-window)
                          (side . bottom)
                          (window-height . 0.4)))
+    (emcp-confirm--maybe-notify server session title buf)
     buf))
 
 (provide 'emcp-confirm)
