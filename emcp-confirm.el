@@ -29,12 +29,18 @@
 (require 'cl-lib)
 (require 'subr-x)
 
+(require 'emcp-core)
+
 (defgroup emcp-confirm ()
   "Confirmation buffer for EMCP tools."
   :group 'emcp)
 
-(defface emcp-confirm-title '((t :inherit font-lock-keyword-face))
+(defface emcp-confirm-title '((t :inherit font-lock-function-name-face))
   "Face used for the verb in the confirmation buffer's header line."
+  :group 'emcp-confirm)
+
+(defface emcp-confirm-agent '((t :inherit font-lock-keyword-face))
+  "Face used for the agent label in the confirmation buffer's header line."
   :group 'emcp-confirm)
 
 (defface emcp-confirm-key '((t :inherit font-lock-builtin-face))
@@ -132,18 +138,16 @@ collapses cleanly when the caller has nothing to display."
 (defun emcp-confirm--render (session title body groups)
   "Render the confirmation buffer body.
 
-SESSION is the MCP session plist; only its :id is used for the header.
-TITLE is the verb that completes the header line.  BODY is a
-caller-supplied string inserted between the header and the action menu;
-it is indented by two spaces and given a trailing newline.  GROUPS is
-the list of action groups passed through to `emcp-confirm--render-group'."
-  (let ((session-id (or (plist-get session :id) "?")))
-    (concat
-     (format "The agent in session %s wants to %s:\n\n"
-             (substring session-id 0 (min 8 (length session-id)))
-             (propertize title 'face 'emcp-confirm-title))
-     (emcp-confirm--format-body body)
-     (mapconcat #'emcp-confirm--render-group groups ""))))
+SESSION is the MCP session plist.  TITLE is the verb that completes the
+header line.  BODY is a caller-supplied string describing what the agent
+wants to TITLE.  GROUPS is a list of action groups that the user can
+take."
+  (concat
+   (format "%s wants to %s:\n\n"
+           (propertize (emcp--session-label session) 'face 'emcp-confirm-agent)
+           (propertize title 'face 'emcp-confirm-title))
+   (emcp-confirm--format-body body)
+   (mapconcat #'emcp-confirm--render-group groups "")))
 
 (defun emcp-confirm--build-keymap (groups)
   "Build a keymap binding each :result/:command action in GROUPS.

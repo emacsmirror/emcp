@@ -27,6 +27,8 @@
 (require 'cl-lib)
 (require 'rx)
 (require 'seq)
+(require 'url-parse)
+(require 'url-util)
 
 (require 'emcp-uri)
 
@@ -320,13 +322,14 @@ and RESPONSE is the JSON-RPC response."
                                    (buffer-string))))
                  (concat "data:image/svg+xml;base64," (base64-encode-string data t))))
          (capabilities (emcp--server-capabilities server))
-         (session `( :id ,(emcp--make-session-id)
-                     :state initializing
-                     :protocol-version ,protocol-version
-                     :client-capabilities ,(gethash "capabilities" params)
-                     :server-capabilities ,capabilities
-                     :client-info ,(gethash "clientInfo" params)
-                     :client-channel nil))
+         (session (list :id (emcp--make-session-id)
+                        :state 'initializing
+                        :protocol-version protocol-version
+                        :client-capabilities (gethash "capabilities" params)
+                        :server-capabilities capabilities
+                        :client-info (gethash "clientInfo" params)
+                        :client-channel nil
+                        :roots nil))
          (response (emcp--jsonrpc-result
                     request
                     `((protocolVersion . ,protocol-version)
@@ -396,7 +399,8 @@ channel."
   (when-let* ((channel (plist-get session :client-channel)))
     ;; Close the previous channel
     (funcall channel nil))
-  (plist-put session :client-channel send-request))
+  (plist-put session :client-channel send-request)
+  (emcp--server-maybe-fetch-roots server session))
 
 (defun emcp--server-on-client-channel-closed (_server session)
   "The client channel of SESSION on SERVER has been closed."
@@ -644,6 +648,57 @@ SEND-RESPONSE is called with the response to REQUEST."
       (emcp--log server session
         (warning (format "Unexpected response ID %s" id))))))
 
+(defun emcp--normalize-root (root)
+  "Normalize a ROOT object from a \"roots/list\" response.
+
+ROOT is a hash table with a \"uri\" key and an optional \"name\" key.
+The returned plist has:
+  :uri   The URI exactly as the client sent it.
+  :path  The decoded local filesystem path for \"file://\" URIs.
+  :name  The client-provided name, or nil if absent."
+  (when (hash-table-p root)
+    (let* ((uri (gethash "uri" root))
+           (name (gethash "name" root))
+           (parsed (url-generic-parse-url uri))
+           (path (when (equal (url-type parsed) "file")
+                   (url-unhex-string (url-filename parsed)))))
+      (list :uri uri :path path :name name))))
+
+(defun emcp--server-fetch-roots (server session)
+  "Request filesystem roots for a SESSION and store them in its :roots property.
+
+SERVER is the server for SESSION."
+  (emcp--server-send-request
+   server session "roots/list"
+   :on-result (lambda (result)
+                (plist-put session :roots
+                           (when (hash-table-p result)
+                             (mapcar #'emcp--normalize-root
+                                     (gethash "roots" result)))))
+   :on-error (lambda (code message _data)
+               (emcp--log server session
+                 (warning (format "roots/list failed: %s (%s)" message code))))))
+
+(defun emcp--client-supports-roots-p (session)
+  "Return non-nil if SESSION's client declared the \"roots\" capability."
+  (let ((caps (plist-get session :client-capabilities)))
+    (and (hash-table-p caps) (gethash "roots" caps))))
+
+(defun emcp--server-maybe-fetch-roots (server session)
+  "Fetch SESSION's roots from SERVER's client if the time is right.
+
+Requires the client to declare the \"roots\" capability, the session to
+have completed initialization, a client channel to be open, and no
+roots to be cached yet.  This is the single policy gate shared by the
+three events that may trigger a fetch: the \"initialized\" notification,
+the establishment of a client channel, and the \"roots/list_changed\"
+notification (which clears the cache first)."
+  (when (and (emcp--client-supports-roots-p session)
+             (eq (plist-get session :state) 'up)
+             (emcp--server-client-channel-p server session)
+             (not (plist-get session :roots)))
+    (emcp--server-fetch-roots server session)))
+
 (defun emcp--server-on-notification (server session request)
   "Handle the MCP JSON-RPC2.0 notification REQUEST on SERVER in SESSION."
   (emcp--log server session
@@ -656,11 +711,36 @@ SEND-RESPONSE is called with the response to REQUEST."
           (emcp--log server session
             (error (format "Error during notification handling:\n%s"
                            (emcp--prefix-lines "| " (error-message-string err))))))))
-    (when (and (eq (plist-get session :state) 'initializing)
-               (equal (gethash "method" request) "notifications/initialized"))
-      (plist-put session :state 'up)
-      (emcp--log server session
-        (debug "Initialization complete")))))
+    (pcase (gethash "method" request)
+      ("notifications/initialized"
+       (when (eq (plist-get session :state) 'initializing)
+         (plist-put session :state 'up)
+         (emcp--log server session
+           (debug "Initialization complete"))
+         (emcp--server-maybe-fetch-roots server session)))
+      ("notifications/roots/list_changed"
+       ;; Clear the old roots since they are invalid now, which also signals a re-fetch
+       (plist-put session :roots nil)
+       (emcp--server-maybe-fetch-roots server session)))))
+
+(defun emcp--session-label (session)
+  "Format a short, human-readable label for SESSION."
+  (let* ((info (plist-get session :client-info))
+         (title (and (hash-table-p info)
+                     (or (gethash "title" info)
+                         (gethash "name" info))))
+         (root (car (plist-get session :roots)))
+         (root-name (or (plist-get root :name)
+                        (when-let* ((path (plist-get root :path)))
+                          (file-name-nondirectory
+                           (directory-file-name path)))))
+         (detail (or root-name
+                     (let ((id (plist-get session :id)))
+                       (and id (substring id 0 (min 8 (length id)))))
+                     "?")))
+    (if title
+        (format "%s (%s)" title detail)
+      (format "(%s)" detail))))
 
 ;;; Capability defining macros
 

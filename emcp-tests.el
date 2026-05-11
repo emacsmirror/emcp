@@ -49,19 +49,22 @@
 Drives SERVER directly without any transport."
   server session next-request-id)
 
-(cl-defun emcp-tests-client-init-session (server &key on-request on-notification)
+(cl-defun emcp-tests-client-init-session
+    (server &key on-request on-notification capabilities)
   "Initialize a new client session for SERVER.
 
 Calls (ON-REQUEST REQUEST) when the server sends a request
-and (ON-NOTIFICATION NOTIFICATION) when the server sends a notification."
+and (ON-NOTIFICATION NOTIFICATION) when the server sends a notification.
+
+CAPABILITIES is an alist used as the client `capabilities' object in the
+initialize request."
   (pcase-let ((`(,session ,response)
                (emcp--server-on-initialize
                 server
                 (to-hash-table
-                 '((id . 1) (params . ((protocolVersion . "2025-11-25"))))))))
-    (emcp--server-on-notification
-     server session
-     (to-hash-table '((method . "notifications/initialized"))))
+                 `((id . 1) (params . ((protocolVersion . "2025-11-25")
+                                       ,@(when capabilities
+                                           `((capabilities . ,capabilities))))))))))
     (when (or on-request on-notification)
       (emcp--server-on-client-channel
        server session
@@ -71,6 +74,9 @@ and (ON-NOTIFICATION NOTIFICATION) when the server sends a notification."
            (funcall on-request request))
           ((and on-notification (not (alist-get 'id request)))
            (funcall on-notification request))))))
+    (emcp--server-on-notification
+     server session
+     (to-hash-table '((method . "notifications/initialized"))))
     (emcp-tests-make-client :server server
                             :session session
                             :next-request-id 2)))
@@ -703,6 +709,65 @@ seconds to milliseconds while still exercising the same code paths."
                                                              (id . 2))))
       (should (not result))
       (should (equal error '(128 "miserably" "some data"))))))
+
+;;; Roots and session labels
+
+(ert-deftest emcp-tests-fetch-roots-on-initialized ()
+  ;; A client that declares "roots" capability receives a "roots/list" request right after
+  ;; "notifications/initialized", and the normalized response is stored on the session.
+  (with-server server (emcp--server-build)
+    (let* (requests
+           (client (emcp-tests-client-init-session
+                    server
+                    :capabilities '((roots . ((listChanged . t))))
+                    :on-request (lambda (r) (push r requests))))
+           (session (emcp-tests-client-session client))
+           (request (car requests)))
+      (should (equal (alist-get 'method request) "roots/list"))
+      (emcp--server-on-result
+       server session
+       (to-hash-table `((jsonrpc . "2.0")
+                        (id . ,(alist-get 'id request))
+                        (result . ((roots . [((uri . "file:///path/to/emcp")
+                                              (name . "emcp"))]))))))
+      (let ((roots (plist-get session :roots)))
+        (should (= (length roots) 1))
+        (should (equal (plist-get (car roots) :name) "emcp"))
+        (should (equal (plist-get (car roots) :path) "/path/to/emcp"))))))
+
+(ert-deftest emcp-tests-fetch-roots-on-list-changed ()
+  ;; "notifications/roots/list_changed" clears the cached roots, triggers a fresh
+  ;; "roots/list", and the new result replaces them.
+  (with-server server (emcp--server-build)
+    (let* (requests
+           (client (emcp-tests-client-init-session
+                    server
+                    :capabilities '((roots . ((listChanged . t))))
+                    :on-request (lambda (r) (push r requests))))
+           (session (emcp-tests-client-session client)))
+      ;; Resolve the initial fetch with one root.
+      (let ((req (pop requests)))
+        (emcp--server-on-result
+         server session
+         (to-hash-table `((jsonrpc . "2.0")
+                          (id . ,(alist-get 'id req))
+                          (result . ((roots . [((uri . "file:///old")
+                                                (name . "old"))])))))))
+      ;; Now signal that the list changed; a new request should be sent.
+      (emcp--server-on-notification
+       server session
+       (to-hash-table '((method . "notifications/roots/list_changed"))))
+      (let ((req (pop requests)))
+        (should (equal (alist-get 'method req) "roots/list"))
+        (emcp--server-on-result
+         server session
+         (to-hash-table `((jsonrpc . "2.0")
+                          (id . ,(alist-get 'id req))
+                          (result . ((roots . [((uri . "file:///new")
+                                                (name . "new"))])))))))
+      (let ((roots (plist-get session :roots)))
+        (should (= (length roots) 1))
+        (should (equal (plist-get (car roots) :name) "new"))))))
 
 ;;; Eval tool
 
