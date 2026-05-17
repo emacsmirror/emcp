@@ -40,8 +40,8 @@
 
 ;;; Public interface
 
-(require 'emcp-prompts)
 (require 'emcp-resources)
+(require 'emcp-screenshot)
 (require 'emcp-tools)
 (require 'emcp-tools-eval)
 (require 'emcp-tools-send-keys)

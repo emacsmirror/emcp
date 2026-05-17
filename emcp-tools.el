@@ -34,8 +34,6 @@
 
 (require 'emcp-core)
 
-(declare-function x-export-frames "xfns.c")
-
 (emcp-deftool emcp-tools-apropos
     ((pattern "Regular expression to search for")
      (kind "Restrict results to a kind of symbol (\"any\", \"function\", \"command\", \"macro\", \"variable\", \"custom\", \"face\", \"feature\" or \"widget\")"
@@ -440,24 +438,6 @@ variables."
               (err-result (format "Failed to set: %s"
                                   (error-message-string err)))))))
       (err-result (format "Variable %s is not bound." name)))))
-
-;;; Screenshot
-
-(emcp-deftool emcp-tools-screenshot ()
-  "View screenshots of all visible Emacs frames."
-  :name "screenshot"
-  (if (and (fboundp 'x-export-frames)
-           (display-graphic-p))
-      (let* ((frames (seq-filter #'frame-visible-p (frame-list)))
-             (blocks (cl-loop for frame in frames
-                              collect `((type . "image")
-                                        (data . ,(base64-encode-string
-                                                  (x-export-frames frame 'png) t))
-                                        (mimeType . "image/png")))))
-        `((content . ,(vconcat blocks))))
-    '((content . [((type . "text")
-                   (text . "Cannot take screenshots in non-graphical Emacs"))])
-      (isError . t))))
 
 (provide 'emcp-tools)
 ;;; emcp-tools.el ends here

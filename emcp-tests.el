@@ -371,7 +371,7 @@ the full JSON-RPC response."
 (defun emcp-tests--emcp-source-files ()
   "Return the paths of some EMCP source files."
   (mapcar #'find-library-name
-          '("emcp" "emcp-core" "emcp-confirm" "emcp-http" "emcp-prompts")))
+          '("emcp" "emcp-core" "emcp-confirm" "emcp-http" "emcp-screenshot")))
 
 (defmacro emcp-tests-with-emcp-refs-scope (&rest body)
   "Run BODY with `elisp-refs--loaded-paths' restricted to a subset of EMCP.

@@ -459,7 +459,7 @@ Keyword options:
 #+end_src
 
 # begin:prompts
-*** =/screenshot= [[./emcp-prompts.el::35][~emcp-prompt-screenshot~]]
+*** =/screenshot= [[./emcp-screenshot.el::97][~emcp-prompt-screenshot~]]
 :PROPERTIES:
 :CUSTOM_ID: prompt-screenshot
 :END:
@@ -577,7 +577,7 @@ Read a node from an Emacs Info manual.
 #+end_src
 
 # begin:tools
-*** =apropos= [[./emcp-tools.el::39][~emcp-tools-apropos~]]
+*** =apropos= [[./emcp-tools.el::37][~emcp-tools-apropos~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-apropos
 :END:
@@ -588,7 +588,7 @@ Parameters:
 - =pattern= (string) :: Regular expression to search for
 - =kind= (string, optional) :: Restrict results to a kind of symbol ("any", "function", "command", "macro", "variable", "custom", "face", "feature" or "widget")
 
-*** =describe= [[./emcp-tools.el::311][~emcp-tools-describe~]]
+*** =describe= [[./emcp-tools.el::309][~emcp-tools-describe~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-describe
 :END:
@@ -616,7 +616,7 @@ every tool call goes through a layered confirmation system:
 Parameters:
 - =code= (string) :: Multiple top-level forms are wrapped in an implicit `progn'.
 
-*** =find-definition= [[./emcp-tools.el::150][~emcp-tools-find-definition~]]
+*** =find-definition= [[./emcp-tools.el::148][~emcp-tools-find-definition~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-find-definition
 :END:
@@ -627,7 +627,7 @@ Parameters:
 - =symbol= (string) :: Name of the symbol to look up.
 - =kind= (string, optional) :: Restrict to a kind of definition ("any", "function", "command", "macro", "variable", "custom", "face", "feature" or "widget").
 
-*** =find-references= [[./emcp-tools.el::265][~emcp-tools-find-references~]]
+*** =find-references= [[./emcp-tools.el::263][~emcp-tools-find-references~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-find-references
 :END:
@@ -638,7 +638,7 @@ Parameters:
 - =symbol= (string) :: Name of the symbol to look up.
 - =kind= (string, optional) :: Restrict to a kind of reference ("any", "function", "command", "macro", "variable", "custom", "face", "feature" or "widget").
 
-*** =get-variable= [[./emcp-tools.el::399][~emcp-tools-get-variable~]]
+*** =get-variable= [[./emcp-tools.el::397][~emcp-tools-get-variable~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-get-variable
 :END:
@@ -652,7 +652,7 @@ variables.
 Parameters:
 - =name= (string) :: Symbol
 
-*** =info-search= [[./emcp-tools.el::368][~emcp-tools-info-search~]]
+*** =info-search= [[./emcp-tools.el::366][~emcp-tools-info-search~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-info-search
 :END:
@@ -663,7 +663,7 @@ Parameters:
 - =pattern= (string) :: Regular expression to search for in Info indices
 - =manual= (string, optional) :: Restrict search to this manual name, e.g. "elisp" or "emacs"
 
-*** =screenshot= [[./emcp-tools.el::446][~emcp-tools-screenshot~]]
+*** =screenshot= [[./emcp-screenshot.el::77][~emcp-tools-screenshot~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-screenshot
 :END:
@@ -686,7 +686,7 @@ guide for a future one.
 Parameters:
 - =keys= (string) :: Key sequence in `kbd' notation, e.g. =C-x C-f=, =M-x list-buffers RET=, or =h e l l o= for literal characters.
 
-*** =set-variable= [[./emcp-tools.el::415][~emcp-tools-set-variable~]]
+*** =set-variable= [[./emcp-tools.el::413][~emcp-tools-set-variable~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-set-variable
 :END:
@@ -944,7 +944,7 @@ Default: ~(locate-user-emacs-file "emcp/eval.eld")~
 
 Default: ~query~
 
-** [[./emcp-tools.el::255][~emcp-tools-find-references-max-lines~]]
+** [[./emcp-tools.el::253][~emcp-tools-find-references-max-lines~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-tools-find-references-max-lines
 :END:
