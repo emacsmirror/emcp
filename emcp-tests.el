@@ -858,7 +858,9 @@ seconds to milliseconds while still exercising the same code paths."
                                    '((code . "(+ 40 2)"))
       (let ((text (alist-get 'text (aref (alist-get 'content
                                                     (alist-get 'result response)) 0))))
-        (should (equal text "42"))))))
+        ;; Reply is a Markdown document with the code and the result in
+        ;; separate fenced blocks.
+        (should (equal text "```emacs-lisp\n(+ 40 2)\n```\n\n```emacs-lisp\n42\n```"))))))
 
 (ert-deftest emcp-tests-eval-tool-default-reject ()
   (let ((emcp-tools-eval-default-policy nil))
@@ -895,7 +897,11 @@ seconds to milliseconds while still exercising the same code paths."
                                    '((code . "(setq emcp-tests--probe 1) (1+ emcp-tests--probe)"))
       (let ((text (alist-get 'text (aref (alist-get 'content
                                                     (alist-get 'result response)) 0))))
-        (should (equal text "2"))
+        ;; Code and value both appear inside their own fenced blocks.
+        (should (equal text (concat "```emacs-lisp\n"
+                                    "(progn (setq emcp-tests--probe 1) (1+ emcp-tests--probe))\n"
+                                    "```\n\n"
+                                    "```emacs-lisp\n2\n```")))
         (should (= emcp-tests--probe 1))))))
 
 ;;; Send-keys tool
