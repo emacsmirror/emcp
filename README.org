@@ -459,7 +459,7 @@ Keyword options:
 #+end_src
 
 # begin:prompts
-*** =/screenshot= [[./emcp-screenshot.el::97][~emcp-prompt-screenshot~]]
+*** =/screenshot= [[./emcp-screenshot.el::164][~emcp-prompt-screenshot~]]
 :PROPERTIES:
 :CUSTOM_ID: prompt-screenshot
 :END:
@@ -660,7 +660,7 @@ Parameters:
 - =pattern= (string) :: Regular expression to search for in Info indices
 - =manual= (string, optional) :: Restrict search to this manual name, e.g. "elisp" or "emacs"
 
-*** =screenshot= [[./emcp-screenshot.el::77][~emcp-tools-screenshot~]]
+*** =screenshot= [[./emcp-screenshot.el::144][~emcp-tools-screenshot~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-screenshot
 :END:
