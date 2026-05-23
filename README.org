@@ -599,19 +599,16 @@ Parameters:
 - =symbol= (string) :: Name of the symbol to describe.
 - =kind= (string, optional) :: Restrict to a kind of definition ("any", "function", "command", "macro", "variable", "custom", "face", "feature" or "widget").
 
-*** =eval= [[./emcp-tools-eval.el::260][~emcp-tools-eval~]]
+*** =eval= [[./emcp-tools-eval.el::202][~emcp-tools-eval~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-eval
 :END:
 
 Evaluate Emacs Lisp.
 
-To enhance the safety of letting an agent execute arbitrary code,
-every tool call goes through a layered confirmation system:
-1. If the session is in =accept= or =reject= mode, do that
-2. If that particular code has been accepted or rejected for this
-   session or permanently, do that
-3. Otherwise, show the formatted code in a buffer and ask the user
+To enhance the safety of letting an agent execute arbitrary code, every
+tool call goes through a confirmation buffer.  The user can also enable
+a session-wide accept or reject mode for trusted or untrusted sessions.
 
 Parameters:
 - =code= (string) :: Multiple top-level forms are wrapped in an implicit `progn'.
@@ -670,7 +667,7 @@ Parameters:
 
 View screenshots of all visible Emacs frames.
 
-*** =send-keys= [[./emcp-tools-send-keys.el::149][~emcp-tools-send-keys~]]
+*** =send-keys= [[./emcp-tools-send-keys.el::148][~emcp-tools-send-keys~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-send-keys
 :END:
@@ -793,7 +790,7 @@ EMCP exposes the following customs. Inspect or change them with =M-x customize-g
 
 Default: ~"*EMCP confirm*"~
 
-** [[./emcp-confirm.el::223][~emcp-confirm-notify-darwin-bundle-id~]]
+** [[./emcp-confirm.el::224][~emcp-confirm-notify-darwin-bundle-id~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-confirm-notify-darwin-bundle-id
 :END:
@@ -807,7 +804,7 @@ Default: ~"*EMCP confirm*"~
 
 Default: ~"org.gnu.Emacs"~
 
-** [[./emcp-confirm.el::281][~emcp-confirm-notify-function~]]
+** [[./emcp-confirm.el::282][~emcp-confirm-notify-function~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-confirm-notify-function
 :END:
@@ -919,30 +916,18 @@ Default:
 	       (emcp-tools-eval emcp-tools-send-keys)))
 #+end_src
 
-** [[./emcp-tools-eval.el::55][~emcp-tools-eval-cache-file~]]
-:PROPERTIES:
-:CUSTOM_ID: custom-emcp-tools-eval-cache-file
-:END:
-
-: File where persistent accept/reject decisions are stored.
-:
-: The file contains a single sexp: an alist of (FORM . DECISION) pairs
-: where DECISION is t (accept) or nil (reject).
-
-Default: ~(locate-user-emacs-file "emcp/eval.eld")~
-
-** [[./emcp-tools-eval.el::44][~emcp-tools-eval-default-policy~]]
+** [[./emcp-tools-eval.el::42][~emcp-tools-eval-default-policy~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-tools-eval-default-policy
 :END:
 
-: Default action when no cached decision applies.
+: Default action when no session mode applies.
 :
-: t      always accept without prompting,
-: nil    always reject without prompting,
-: query  open the confirmation buffer.
+: t    always accept without prompting,
+: nil  always reject without prompting,
+: ask  open the confirmation buffer.
 
-Default: ~query~
+Default: ~ask~
 
 ** [[./emcp-tools.el::253][~emcp-tools-find-references-max-lines~]]
 :PROPERTIES:
@@ -964,11 +949,11 @@ Default: ~3~
 
 : Default action when no session mode applies.
 :
-: t      always accept without prompting,
-: nil    always reject without prompting,
-: query  open the confirmation buffer.
+: t    always accept without prompting,
+: nil  always reject without prompting,
+: ask  open the confirmation buffer.
 
-Default: ~query~
+Default: ~ask~
 # end:customs
 
 * Development

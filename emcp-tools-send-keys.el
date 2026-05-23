@@ -38,28 +38,27 @@
   "Gated key injection tool for EMCP."
   :group 'emcp)
 
-(defcustom emcp-tools-send-keys-default-policy 'query
+(defcustom emcp-tools-send-keys-default-policy 'ask
   "Default action when no session mode applies.
 
-t      always accept without prompting,
-nil    always reject without prompting,
-query  open the confirmation buffer."
+t    always accept without prompting,
+nil  always reject without prompting,
+ask  open the confirmation buffer."
   :group 'emcp-tools-send-keys
   :type '(choice (const :tag "Always accept" t)
                  (const :tag "Always reject" nil)
-                 (const :tag "Ask the user" query)))
+                 (const :tag "Ask the user" ask)))
 
 ;;; Authorization
 
 (defun emcp-tools-send-keys--authorize (session)
   "Authorize a send-keys call in SESSION.
 
-Return t (accept), nil (reject), or `prompt' (ask user)."
+Return t (accept), nil (reject), or `ask' (ask user)."
   (let ((mode (plist-get session :emcp-tools-send-keys-mode)))
     (cond
      ((eq mode 'accept) t)
      ((eq mode 'reject) nil)
-     ((eq emcp-tools-send-keys-default-policy 'query) 'prompt)
      (t emcp-tools-send-keys-default-policy))))
 
 ;;; Confirmation buffer
@@ -114,9 +113,17 @@ decided on."
 (defun emcp-tools-send-keys--decision-source (session)
   "Return a symbol describing why a send-keys call was decided in SESSION.
 
-Used only for logging.  The result is one of `mode' or `default'."
+Used only for logging.  The result is one of:
+- `mode' if SESSION has an accept/reject mode set,
+- `user' if `emcp-tools-send-keys-default-policy' is `ask' (the user
+  is consulted via the confirmation buffer),
+- `default' if `emcp-tools-send-keys-default-policy' is t or nil
+  (auto-decided without asking)."
   (let ((mode (plist-get session :emcp-tools-send-keys-mode)))
-    (if (memq mode '(accept reject)) 'mode 'default)))
+    (cond
+     ((memq mode '(accept reject)) 'mode)
+     ((eq emcp-tools-send-keys-default-policy 'ask) 'user)
+     (t 'default))))
 
 ;;; The tool
 
@@ -165,25 +172,24 @@ Prefer a more specialized tool if available to minimize user interaction
 and decision fatigue."
   :async t
   (let ((decision (emcp-tools-send-keys--authorize session))
+        ;; Capture the source before the prompt opens: a mode-accept or mode-reject pick
+        ;; by the user would otherwise relabel this call's source to `mode'.
+        (source (emcp-tools-send-keys--decision-source session))
         ;; Capture now, since the confirmation buffer's `pop-to-buffer' may change the
         ;; selected window
         (target-window (selected-window)))
-    (cl-flet ((maybe-execute (accept reason)
+    (cl-flet ((maybe-execute (accept)
                 (emcp--log server session
-                  (info (emcp-tools-send-keys--format-log accept reason keys)))
+                  (info (emcp-tools-send-keys--format-log accept source keys)))
                 (if accept
                     (emcp-tools-send-keys--execute keys target-window #'send-result)
                   (send-result
                    `((content . [((type . "text")
                                   (text . "User rejected send-keys."))])
                      (isError . t))))))
-      (pcase decision
-        ('prompt
-         (emcp-tools-send-keys--prompt
-          server session keys
-          (lambda (d) (maybe-execute d 'user))))
-        (_
-         (maybe-execute decision (emcp-tools-send-keys--decision-source session)))))))
+      (if (eq decision 'ask)
+          (emcp-tools-send-keys--prompt server session keys #'maybe-execute)
+        (maybe-execute decision)))))
 
 (provide 'emcp-tools-send-keys)
 ;;; emcp-tools-send-keys.el ends here

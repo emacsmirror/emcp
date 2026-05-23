@@ -76,48 +76,50 @@ decision path.")
 ;; hanging on an unanswered tool call.
 (define-key emcp-confirm-mode-map (kbd "q") #'kill-current-buffer)
 
-(defun emcp-confirm--render-group (group)
-  "Render GROUP as a string of group title plus action cells.
+(defun emcp-confirm--cells (group)
+  "Return GROUP's actions formatted as \"[KEY] LABEL\" cells."
+  (mapcar (lambda (action)
+            (format "[%s] %s"
+                    (propertize (string (nth 0 action))
+                                'face 'emcp-confirm-key)
+                    (nth 1 action)))
+          (plist-get group :actions)))
 
-GROUP is a plist with keys :title (optional string), :columns (optional
-positive integer, defaults to the number of actions) and :actions (a
-list of action cells of the form (KEY LABEL :result SYMBOL) or (KEY
-LABEL :command FUNCTION)).  Actions are laid out column-major into
-:columns columns, with each cell rendered as \"[KEY] LABEL\"."
-  (let* ((title (plist-get group :title))
-         (actions (plist-get group :actions))
-         (n (length actions))
-         (columns (or (plist-get group :columns) n))
-         (rows (max 1 (ceiling n columns)))
-         (cells (mapcar (lambda (action)
-                          (format "[%s] %s"
-                                  (propertize (string (nth 0 action))
-                                              'face 'emcp-confirm-key)
-                                  (nth 1 action)))
-                        actions))
+(defun emcp-confirm--render-groups (groups)
+  "Render GROUPS as titled rows of action cells, column-aligned across groups.
+
+GROUPS is an ordered list of action groups (see `emcp-confirm-prompt').
+Each group renders as an optional title line followed by a single row
+of \"[KEY] LABEL\" cells.  Cells at the same position in different
+groups are padded to a common width so they line up vertically."
+  (let* ((groups-cells (mapcar #'emcp-confirm--cells groups))
+         (n-cols (apply #'max 0 (mapcar #'length groups-cells)))
          (col-widths
-          (cl-loop for c from 0 below columns
-                   collect (cl-loop for r from 0 below rows
-                                    for i = (+ (* c rows) r)
-                                    when (< i n)
-                                    maximize (length (nth i cells))))))
+          (cl-loop for c from 0 below n-cols
+                   collect (or (cl-loop for cells in groups-cells
+                                        ;; The last cell of each row does not contribute
+                                        ;; to its column's width, so an unusually wide
+                                        ;; trailing cell (or a singleton-row cell) cannot
+                                        ;; inflate the layout.
+                                        when (< c (1- (length cells)))
+                                        maximize (length (nth c cells)))
+                               0))))
     (with-temp-buffer
-      (insert "\n")
-      (when title (insert title ":\n"))
-      (dotimes (r rows)
-        (let (parts)
-          (cl-loop for c from 0 below columns
-                   for i = (+ (* c rows) r)
-                   when (< i n) do
-                   (let* ((cell (nth i cells))
-                          (cw (nth c col-widths))
-                          (pad (- (+ cw 5) (length cell))))
-                     (push (concat cell (make-string pad ?\s)) parts)))
-          (when parts
-            (insert "  "
-                    (string-trim-right
-                     (mapconcat #'identity (nreverse parts) ""))
-                    "\n"))))
+      (cl-loop
+       for group in groups
+       for cells in groups-cells do
+       (insert "\n")
+       (when-let* ((title (plist-get group :title)))
+         (insert title ":\n"))
+       (when cells
+         (let ((parts (cl-mapcar
+                       (lambda (cell cw)
+                         (concat cell
+                                 (make-string (max 0 (- cw (length cell))) ?\s)))
+                       cells col-widths)))
+           (insert "  "
+                   (string-trim-right (mapconcat #'identity parts "   "))
+                   "\n"))))
       (buffer-string))))
 
 (defun emcp-confirm--format-body (body)
@@ -149,7 +151,7 @@ take."
            (propertize (emcp--session-label session) 'face 'emcp-confirm-agent)
            (propertize title 'face 'emcp-confirm-title))
    (emcp-confirm--format-body body)
-   (mapconcat #'emcp-confirm--render-group groups "")))
+   (emcp-confirm--render-groups groups)))
 
 (defun emcp-confirm--build-keymap (groups)
   "Build a keymap binding each :result/:command action in GROUPS.
@@ -339,9 +341,6 @@ arbitrary per-prompt data (e.g. the original code for a copy command).
 
 GROUPS is an ordered list of action groups.  Each group is a plist with:
   :title   Optional string heading.
-  :columns Optional positive integer; defaults to the number of actions
-           in the group, so they fit on one row.  Actions are laid out
-           column-major in the given number of columns.
   :actions Non-empty list of (KEY LABEL :result SYMBOL) or
            (KEY LABEL :command FUNCTION) cells.  KEY is a character.  A
            :result action invokes CALLBACK with SYMBOL and dismisses the

@@ -19,10 +19,8 @@
 
 ;;; Commentary:
 
-;; An MCP tool to allow agents to evaluate arbitrary Emacs Lisp.  On every call, the user
-;; has to confirm or reject the execution.  Acceptance or rejection can be remembered per
-;; session or permanently and the user can also enable always-accept or always-reject
-;; modes for a session.
+;; An MCP tool to allow agents to evaluate arbitrary Emacs Lisp.  Each call goes through a
+;; confirmation buffer; the user can also enable a session-wide accept or reject mode.
 
 ;;; Code:
 
@@ -41,25 +39,16 @@
   "Gated Emacs Lisp evaluation tool for EMCP."
   :group 'emcp)
 
-(defcustom emcp-tools-eval-default-policy 'query
-  "Default action when no cached decision applies.
+(defcustom emcp-tools-eval-default-policy 'ask
+  "Default action when no session mode applies.
 
-t      always accept without prompting,
-nil    always reject without prompting,
-query  open the confirmation buffer."
+t    always accept without prompting,
+nil  always reject without prompting,
+ask  open the confirmation buffer."
   :group 'emcp-tools-eval
   :type '(choice (const :tag "Always accept" t)
                  (const :tag "Always reject" nil)
-                 (const :tag "Ask the user" query)))
-
-(defcustom emcp-tools-eval-cache-file
-  (locate-user-emacs-file "emcp/eval.eld")
-  "File where persistent accept/reject decisions are stored.
-
-The file contains a single sexp: an alist of (FORM . DECISION) pairs
-where DECISION is t (accept) or nil (reject)."
-  :group 'emcp-tools-eval
-  :type 'file)
+                 (const :tag "Ask the user" ask)))
 
 ;;; Parsing
 
@@ -92,56 +81,16 @@ a message on failure.  Multiple top-level forms are wrapped in (progn
       (`(,single)    single)
       (forms         `(progn ,@forms)))))
 
-;;; Recorded decisions
-
-(defvar emcp-tools-eval--decisions-cache nil
-  "Cached value of the persistent decisions.")
-
-(defun emcp-tools-eval--recorded-decisions ()
-  "Return the persistent decisions alist, loading it lazily."
-  (unless emcp-tools-eval--decisions-cache
-    (setq emcp-tools-eval--decisions-cache
-          (if (file-readable-p emcp-tools-eval-cache-file)
-              (with-temp-buffer
-                (insert-file-contents emcp-tools-eval-cache-file)
-                (condition-case _ (read (current-buffer))
-                  (error nil)))
-            nil)))
-  emcp-tools-eval--decisions-cache)
-
-(defun emcp-tools-eval--record-decision (form decision)
-  "Persistently record DECISION (t or nil) for FORM."
-  (let ((alist (emcp-tools-eval--recorded-decisions)))
-    (setf (alist-get form alist nil nil #'equal) decision)
-    (setq emcp-tools-eval--decisions-cache alist)
-    (emcp-tools-eval--write-decisions alist)))
-
-(defun emcp-tools-eval--write-decisions (alist)
-  "Write ALIST to `emcp-tools-eval-cache-file'."
-  (let ((dir (file-name-directory emcp-tools-eval-cache-file)))
-    (unless (file-directory-p dir) (make-directory dir t)))
-  (with-temp-file emcp-tools-eval-cache-file
-    (insert ";;; -*- lexical-binding: t -*-\n")
-    (insert (pp-to-string alist))))
-
 ;;; Authorization
 
-(defun emcp-tools-eval--authorize (form session persistent-alist)
-  "Authorize FORM in SESSION against the persistent and session caches.
+(defun emcp-tools-eval--authorize (session)
+  "Authorize an eval call in SESSION.
 
-PERSISTENT-ALIST is the persistent decisions alist.  Return t (accept),
-nil (reject), or `prompt' (ask user)."
-  (let ((mode (plist-get session :emcp-tools-eval-mode))
-        ;; `assoc' (not `alist-get') so we can tell a miss from an
-        ;; explicit nil (reject) decision.
-        (sc (assoc form (plist-get session :emcp-tools-eval-cache)))
-        (pc (assoc form persistent-alist)))
+Return t (accept), nil (reject), or `ask' (ask user)."
+  (let ((mode (plist-get session :emcp-tools-eval-mode)))
     (cond
      ((eq mode 'accept) t)
      ((eq mode 'reject) nil)
-     (sc (cdr sc))
-     (pc (cdr pc))
-     ((eq emcp-tools-eval-default-policy 'query) 'prompt)
      (t emcp-tools-eval-default-policy))))
 
 ;;; Confirmation buffer
@@ -152,24 +101,15 @@ nil (reject), or `prompt' (ask user)."
   (kill-new (plist-get (plist-get emcp-confirm--pending :context) :code))
   (message "EMCP: code copied to kill-ring"))
 
-(defun emcp-tools-eval--apply-action (action session form)
-  "Convert ACTION into a decision about FORM.
+(defun emcp-tools-eval--apply-action (action session)
+  "Convert ACTION into a decision about an eval call in SESSION.
 
-Depending on ACTION, maybe store the decision in the SESSION or
-persistent cache."
-  (cl-flet ((cache-session (decision)
-              (let ((cache (plist-get session :emcp-tools-eval-cache)))
-                (setf (alist-get form cache nil nil #'equal) decision)
-                (plist-put session :emcp-tools-eval-cache cache))))
-    (pcase action
-      ('yes-once    t)
-      ('no-once     nil)
-      ('yes-session (cache-session t) t)
-      ('no-session  (cache-session nil) nil)
-      ('yes-always  (emcp-tools-eval--record-decision form t) t)
-      ('no-always   (emcp-tools-eval--record-decision form nil) nil)
-      ('mode-accept (plist-put session :emcp-tools-eval-mode 'accept) t)
-      ('mode-reject (plist-put session :emcp-tools-eval-mode 'reject) nil))))
+May mutate SESSION to record a session mode."
+  (pcase action
+    ('yes-once    t)
+    ('no-once     nil)
+    ('mode-accept (plist-put session :emcp-tools-eval-mode 'accept) t)
+    ('mode-reject (plist-put session :emcp-tools-eval-mode 'reject) nil)))
 
 (defun emcp-tools-eval--fontify-elisp (str)
   "Return STR with `emacs-lisp-mode' font-lock applied.
@@ -199,13 +139,8 @@ action."
      :on-dismiss 'no-once
      :groups
      `(( :title "Accept?"
-         :columns 3
-         :actions ((?y "Yes once"           :result yes-once)
-                   (?n "No once"            :result no-once)
-                   (?Y "Yes this session"   :result yes-session)
-                   (?N "No this session"    :result no-session)
-                   (?! "Yes always (saved)" :result yes-always)
-                   (?~ "No always (saved)"  :result no-always)))
+         :actions ((?y "Yes" :result yes-once)
+                   (?n "No"  :result no-once)))
        ( :title "Session mode (applies to all subsequent eval calls in this session)"
          :actions ((?a "Always accept" :result mode-accept)
                    (?r "Always reject" :result mode-reject)))
@@ -213,7 +148,7 @@ action."
                        :command emcp-tools-eval--copy-code-to-kill-ring))))
      :callback (lambda (action)
                  (funcall callback
-                          (emcp-tools-eval--apply-action action session form))))))
+                          (emcp-tools-eval--apply-action action session))))))
 
 ;;; Decision logging
 
@@ -221,8 +156,8 @@ action."
   "Format a single decision-log line.
 
 DECISION is t (accept) or nil (reject).  REASON is a symbol describing
-why this decision was made (e.g. `user', `cache:sess', `mode',
-`default').  FORM is the form that was decided on."
+why this decision was made (e.g. `user', `mode', `default').  FORM is
+the form that was decided on."
   (let ((pp (string-trim (pp-to-string form))))
     (format "eval %s %s %s"
             (if decision "ACCEPT" "REJECT")
@@ -231,16 +166,19 @@ why this decision was made (e.g. `user', `cache:sess', `mode',
 
 ;;; The tool
 
-(defun emcp-tools-eval--decision-source (session form)
-  "Return a symbol describing why FORM was decided in SESSION.
+(defun emcp-tools-eval--decision-source (session)
+  "Return a symbol describing why an eval call was decided in SESSION.
 
-Used only for logging.  The result is one of `mode', `cache:sess',
-`cache:persist', or `default'."
+Used only for logging.  The result is one of:
+- `mode' if SESSION has an accept/reject mode set,
+- `user' if `emcp-tools-eval-default-policy' is `ask' (the user is
+  consulted via the confirmation buffer),
+- `default' if `emcp-tools-eval-default-policy' is t or nil
+  (auto-decided without asking)."
   (let ((mode (plist-get session :emcp-tools-eval-mode)))
     (cond
      ((memq mode '(accept reject)) 'mode)
-     ((assoc form (plist-get session :emcp-tools-eval-cache)) 'cache:sess)
-     ((assoc form (emcp-tools-eval--recorded-decisions)) 'cache:persist)
+     ((eq emcp-tools-eval-default-policy 'ask) 'user)
      (t 'default))))
 
 (defun emcp-tools-eval--format-result (form output)
@@ -273,12 +211,9 @@ applies syntax highlighting and lets the user fold the code block."
     ((code "Multiple top-level forms are wrapped in an implicit `progn'."))
   "Evaluate Emacs Lisp.
 
-To enhance the safety of letting an agent execute arbitrary code,
-every tool call goes through a layered confirmation system:
-1. If the session is in =accept= or =reject= mode, do that
-2. If that particular code has been accepted or rejected for this
-   session or permanently, do that
-3. Otherwise, show the formatted code in a buffer and ask the user"
+To enhance the safety of letting an agent execute arbitrary code, every
+tool call goes through a confirmation buffer.  The user can also enable
+a session-wide accept or reject mode for trusted or untrusted sessions."
   :name "eval"
   :description "Evaluate Emacs Lisp code in the running Emacs instance and return the
 value of the final form.
@@ -291,24 +226,22 @@ and decision fatigue."
   :async t
   (condition-case err
       (let* ((form (emcp-tools-eval--parse code))
-             (decision (emcp-tools-eval--authorize
-                        form session (emcp-tools-eval--recorded-decisions))))
-        (cl-flet ((maybe-eval (accept reason)
+             (decision (emcp-tools-eval--authorize session))
+             ;; Capture the source before the prompt opens: a mode-accept or mode-reject
+             ;; pick by the user would otherwise relabel this call's source to `mode'.
+             (source (emcp-tools-eval--decision-source session)))
+        (cl-flet ((maybe-eval (accept)
                     (emcp--log server session
-                      (info (emcp-tools-eval--format-log accept reason form)))
+                      (info (emcp-tools-eval--format-log accept source form)))
                     (if accept
                         (emcp-tools-eval--eval-form form #'send-result)
                       (send-result
                        `((content . [((type . "text")
                                       (text . "User rejected evaluation."))])
                          (isError . t))))))
-          (pcase decision
-            ('prompt
-             (emcp-tools-eval--prompt
-              server session form
-              (lambda (d) (maybe-eval d 'user))))
-            (_
-             (maybe-eval decision (emcp-tools-eval--decision-source session form))))))
+          (if (eq decision 'ask)
+              (emcp-tools-eval--prompt server session form #'maybe-eval)
+            (maybe-eval decision))))
     (emcp-tools-eval-parse-error
      (emcp--log server session
        (info (format "eval REJECT parse-error %s" (cadr err))))

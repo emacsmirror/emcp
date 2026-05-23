@@ -788,69 +788,40 @@ seconds to milliseconds while still exercising the same code paths."
   (should-error (emcp-tools-eval--parse "   \n  ")
                 :type 'emcp-tools-eval-parse-error))
 
-(ert-deftest emcp-tests-eval-authorize-session-mode-wins ()
-  ;; Session mode `reject' overrides a persistent `t' for the same form.
-  (let* ((session `(:emcp-tools-eval-mode reject))
-         (persistent (list (cons '(safe-form) t))))
-    (should (eq (emcp-tools-eval--authorize '(safe-form) session persistent) nil))))
+(ert-deftest emcp-tests-eval-authorize-mode-accept ()
+  ;; Session mode `accept' overrides a default-reject policy.
+  (let ((emcp-tools-eval-default-policy nil))
+    (should (eq (emcp-tools-eval--authorize
+                 (list :emcp-tools-eval-mode 'accept))
+                t))))
 
-(ert-deftest emcp-tests-eval-authorize-session-cache-then-persistent ()
-  (let* ((session `(:emcp-tools-eval-cache (((+ 1 2) . t))))
-         (persistent (list (cons '(+ 1 2) nil))))
-    ;; Session cache wins over persistent.
-    (should (eq (emcp-tools-eval--authorize '(+ 1 2) session persistent) t))))
-
-(ert-deftest emcp-tests-eval-authorize-persistent-reject ()
-  ;; A persistent nil entry must be honored as a rejection, not treated as a miss.
+(ert-deftest emcp-tests-eval-authorize-mode-reject ()
+  ;; Session mode `reject' overrides a default-accept policy.
   (let ((emcp-tools-eval-default-policy t))
-    (should (eq (emcp-tools-eval--authorize '(bad-form) nil
-                                            (list (cons '(bad-form) nil)))
+    (should (eq (emcp-tools-eval--authorize
+                 (list :emcp-tools-eval-mode 'reject))
                 nil))))
 
 (ert-deftest emcp-tests-eval-authorize-default-action ()
   (let ((emcp-tools-eval-default-policy t))
-    (should (eq (emcp-tools-eval--authorize '(any) nil nil) t)))
+    (should (eq (emcp-tools-eval--authorize nil) t)))
   (let ((emcp-tools-eval-default-policy nil))
-    (should (eq (emcp-tools-eval--authorize '(any) nil nil) nil)))
-  (let ((emcp-tools-eval-default-policy 'query))
-    (should (eq (emcp-tools-eval--authorize '(any) nil nil) 'prompt))))
+    (should (eq (emcp-tools-eval--authorize nil) nil)))
+  (let ((emcp-tools-eval-default-policy 'ask))
+    (should (eq (emcp-tools-eval--authorize nil) 'ask))))
 
-(ert-deftest emcp-tests-eval-action-yes-session ()
-  ;; Calling the action handler updates the session cache and returns t.
-  (let ((session (list :emcp-tools-eval-cache nil)))
-    (should (eq (emcp-tools-eval--apply-action 'yes-session session '(+ 1 2))
-                t))
-    (should (equal (plist-get session :emcp-tools-eval-cache)
-                   '(((+ 1 2) . t))))))
+(ert-deftest emcp-tests-eval-action-once ()
+  (should (eq (emcp-tools-eval--apply-action 'yes-once nil) t))
+  (should (eq (emcp-tools-eval--apply-action 'no-once nil) nil)))
 
-(ert-deftest emcp-tests-eval-action-no-always-persists ()
-  ;; The `no-always' action must persist a nil (reject) decision to disk
-  ;; and a fresh read must recover it as nil, not as a miss.  The
-  ;; `'missing' default to `alist-get' is what distinguishes the two.
-  (let* ((tmp (make-temp-file "emcp-forms" nil ".eld"))
-         (emcp-tools-eval-cache-file tmp)
-         (emcp-tools-eval--decisions-cache nil)
-         (session (list)))
-    (unwind-protect
-        (progn
-          (should (eq (emcp-tools-eval--apply-action 'no-always
-                                                     session '(rm-rf "/"))
-                      nil))
-          (setq emcp-tools-eval--decisions-cache nil)
-          (should (equal (alist-get '(rm-rf "/")
-                                    (emcp-tools-eval--recorded-decisions)
-                                    'missing nil #'equal)
-                         nil)))
-      (delete-file tmp))))
-
-(ert-deftest emcp-tests-eval-action-mode-accept ()
-  ;; Real sessions are created by `emcp--server-on-initialize' with at least
-  ;; an :id key, so `plist-put' mutates in place.  Use a session with one key
-  ;; here so the same is true.
+(ert-deftest emcp-tests-eval-action-mode ()
+  ;; Real sessions always have at least an :id key so `plist-put' mutates
+  ;; in place.
   (let ((session (list :id "test-session")))
-    (should (eq (emcp-tools-eval--apply-action 'mode-accept session '(form))
-                t))
-    (should (eq (plist-get session :emcp-tools-eval-mode) 'accept))))
+    (should (eq (emcp-tools-eval--apply-action 'mode-accept session) t))
+    (should (eq (plist-get session :emcp-tools-eval-mode) 'accept))
+    (should (eq (emcp-tools-eval--apply-action 'mode-reject session) nil))
+    (should (eq (plist-get session :emcp-tools-eval-mode) 'reject))))
 
 (ert-deftest emcp-tests-eval-tool-default-accept ()
   (let ((emcp-tools-eval-default-policy t))
@@ -925,8 +896,8 @@ seconds to milliseconds while still exercising the same code paths."
     (should (eq (emcp-tools-send-keys--authorize nil) t)))
   (let ((emcp-tools-send-keys-default-policy nil))
     (should (eq (emcp-tools-send-keys--authorize nil) nil)))
-  (let ((emcp-tools-send-keys-default-policy 'query))
-    (should (eq (emcp-tools-send-keys--authorize nil) 'prompt))))
+  (let ((emcp-tools-send-keys-default-policy 'ask))
+    (should (eq (emcp-tools-send-keys--authorize nil) 'ask))))
 
 (ert-deftest emcp-tests-send-keys-action-once ()
   (should (eq (emcp-tools-send-keys--apply-action 'yes-once nil) t))
