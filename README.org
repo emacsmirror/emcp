@@ -7,6 +7,9 @@ As an MCP implementation, EMCP supports all the core server features from the [[
 
 I am adding tools etc. to the project as I need them and find a usable design for them. If there is a tool missing which you really want /right now/, EMCP has been designed to be extensible and adding it yourself should be easy and even fun. Just [[#custom-components][follow the instructions]] or hand them to your agent.
 
+#+caption: Claude Code in agent-shell using EMCP to develop =emcp-session-manager=
+[[./media/demo.webp]]
+
 * Installation
 
 You can install EMCP from MELPA, for example =use-package= with [[https://github.com/progfolio/elpaca][elpaca]] would be
