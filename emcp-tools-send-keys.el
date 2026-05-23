@@ -59,6 +59,7 @@ Return t (accept), nil (reject), or `ask' (ask user)."
     (cond
      ((eq mode 'accept) t)
      ((eq mode 'reject) nil)
+     ((eq mode 'ask) 'ask)
      (t emcp-tools-send-keys-default-policy))))
 
 ;;; Confirmation buffer
@@ -115,14 +116,17 @@ decided on."
 
 Used only for logging.  The result is one of:
 - `mode' if SESSION has an accept/reject mode set,
-- `user' if `emcp-tools-send-keys-default-policy' is `ask' (the user
-  is consulted via the confirmation buffer),
+- `user' if SESSION has an `ask' mode set or
+  `emcp-tools-send-keys-default-policy' is `ask' (the user is consulted via
+  the confirmation buffer),
 - `default' if `emcp-tools-send-keys-default-policy' is t or nil
   (auto-decided without asking)."
   (let ((mode (plist-get session :emcp-tools-send-keys-mode)))
     (cond
      ((memq mode '(accept reject)) 'mode)
-     ((eq emcp-tools-send-keys-default-policy 'ask) 'user)
+     ((or (eq mode 'ask)
+          (eq emcp-tools-send-keys-default-policy 'ask))
+      'user)
      (t 'default))))
 
 ;;; The tool

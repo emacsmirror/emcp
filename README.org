@@ -59,6 +59,13 @@ Tools that allow agents to execute arbitrary code, e.g. through code evaluation 
 #+caption: A confirmation dialog to verify code before execution
 [[./media/confirmation.webp]]
 
+** Session management
+
+Start the session manager with =M-x emcp-session-manager=. It gives you an overview over all running servers and their sessions, so that you can easily see which agent in which project is connected to EMCP. From the manager view, you can also change the policies of the =eval= and =send-keys= tools, so if you have put a session in accept mode, which accepts all code evaluations and does not ask for your input anymore, you can return a session to the default ask mode.
+
+#+caption: The session manager lets you inspect the sessions and update their policies
+[[./media/session-manager.webp]]
+
 * Profiles
 :PROPERTIES:
 :CUSTOM_ID: profiles

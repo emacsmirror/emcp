@@ -91,6 +91,7 @@ Return t (accept), nil (reject), or `ask' (ask user)."
     (cond
      ((eq mode 'accept) t)
      ((eq mode 'reject) nil)
+     ((eq mode 'ask) 'ask)
      (t emcp-tools-eval-default-policy))))
 
 ;;; Confirmation buffer
@@ -171,14 +172,16 @@ the form that was decided on."
 
 Used only for logging.  The result is one of:
 - `mode' if SESSION has an accept/reject mode set,
-- `user' if `emcp-tools-eval-default-policy' is `ask' (the user is
-  consulted via the confirmation buffer),
+- `user' if SESSION has an `ask' mode set or `emcp-tools-eval-default-policy'
+  is `ask' (the user is consulted via the confirmation buffer),
 - `default' if `emcp-tools-eval-default-policy' is t or nil
   (auto-decided without asking)."
   (let ((mode (plist-get session :emcp-tools-eval-mode)))
     (cond
      ((memq mode '(accept reject)) 'mode)
-     ((eq emcp-tools-eval-default-policy 'ask) 'user)
+     ((or (eq mode 'ask)
+          (eq emcp-tools-eval-default-policy 'ask))
+      'user)
      (t 'default))))
 
 (defun emcp-tools-eval--format-result (form output)

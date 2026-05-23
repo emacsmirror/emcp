@@ -4,7 +4,7 @@
 ;; URL: https://codeberg.org/martenlienen/emcp
 ;; Keywords: maint
 ;; Package-Version: 0.1.0
-;; Package-Requires: ((emacs "30.1") (http-server "0.1.0") (elisp-refs "1.6"))
+;; Package-Requires: ((emacs "30.1") (http-server "0.1.0") (elisp-refs "1.6") (magit-section "4.0.0"))
 
 ;;; License
 
@@ -42,6 +42,7 @@
 
 (require 'emcp-resources)
 (require 'emcp-screenshot)
+(require 'emcp-session-manager)
 (require 'emcp-tools)
 (require 'emcp-tools-eval)
 (require 'emcp-tools-send-keys)

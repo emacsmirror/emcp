@@ -3,6 +3,7 @@ EMACS ?= emacs
 EL_FILES = emcp-uri.el emcp-core.el emcp-confirm.el emcp-http.el \
   emcp-resources.el \
   emcp-screenshot.el \
+  emcp-session-manager.el \
   emcp-tools.el emcp-tools-eval.el emcp-tools-send-keys.el \
   emcp.el
 
@@ -15,6 +16,9 @@ LOAD_PATH="(progn \
   (unless (package-installed-p 'elisp-refs) \
     (unless package-archive-contents (package-refresh-contents)) \
     (package-install 'elisp-refs)) \
+  (unless (package-installed-p 'magit-section) \
+    (unless package-archive-contents (package-refresh-contents)) \
+    (package-install 'magit-section)) \
   (add-to-list 'load-path default-directory))"
 
 .PHONY: test lint byte-compile checkdoc docs clean
