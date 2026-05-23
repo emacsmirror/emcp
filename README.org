@@ -8,6 +8,7 @@ As an MCP implementation, EMCP supports all the core server features from the [[
 I am adding tools etc. to the project as I need them and find a usable design for them. If there is a tool missing which you really want /right now/, EMCP has been designed to be extensible and adding it yourself should be easy and even fun. Just [[#custom-components][follow the instructions]] or hand them to your agent.
 
 #+caption: Claude Code in agent-shell using EMCP to develop =emcp-session-manager=
+#+attr_html: :width 640
 [[./media/demo.webp]]
 
 * Installation
@@ -60,6 +61,7 @@ For other cases, call ~emcp-start~ interactively, which asks for a profile and p
 Tools that allow agents to execute arbitrary code, e.g. through code evaluation or sending key presses, will by default display a confirmation buffer to the user. In this buffer, the user can inspect the code or key presses and accept or reject the execution.
 
 #+caption: A confirmation dialog to verify code before execution
+#+attr_html: :width 640
 [[./media/confirmation.webp]]
 
 ** Session management
@@ -67,6 +69,7 @@ Tools that allow agents to execute arbitrary code, e.g. through code evaluation 
 Start the session manager with =M-x emcp-session-manager=. It gives you an overview over all running servers and their sessions, so that you can easily see which agent in which project is connected to EMCP. From the manager view, you can also change the policies of the =eval= and =send-keys= tools, so if you have put a session in accept mode, which accepts all code evaluations and does not ask for your input anymore, you can return a session to the default ask mode.
 
 #+caption: The session manager lets you inspect the sessions and update their policies
+#+attr_html: :width 640
 [[./media/session-manager.webp]]
 
 * Profiles
