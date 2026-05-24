@@ -38,12 +38,13 @@
   "An Emacs MCP server."
   :group 'environment)
 
-(defcustom emcp-instructions "Interact with a running Emacs instance.
+(defcustom emcp-instructions "Inspect and control the user's running Emacs.
 
 Use this when you are
 - answering questions about Emacs,
 - debugging Emacs,
 - programming or planning Emacs Lisp,
+- looking up Emacs Lisp files,
 - or controlling an Emacs instance.
 
 Prefer this server over file operations or shell commands when working in an Emacs context."
