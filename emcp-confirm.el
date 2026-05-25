@@ -59,6 +59,18 @@ this name and any numeric suffix, e.g. \"\\\\`\\\\*EMCP confirm\\\\*\"."
   :group 'emcp-confirm
   :type 'string)
 
+(defcustom emcp-confirm-input-delay 0.2
+  "Seconds to ignore input after a confirmation buffer opens.
+
+Prevents accidentally choosing an action when the buffer pops up while
+you are typing in another buffer (e.g. hitting y or n mid-word).
+Keystrokes that arrive during this grace period are dropped with a
+message in the echo area; the buffer accepts input normally once the
+delay has elapsed.  Set to nil or 0 to disable."
+  :group 'emcp-confirm
+  :type '(choice (const :tag "Disabled" nil)
+                 (number :tag "Seconds")))
+
 (defvar-local emcp-confirm--pending nil
   "Plist of the buffer's pending request.
 
@@ -66,6 +78,20 @@ Keys: :server SERVER :session SESSION :context CONTEXT :callback CB
 :on-dismiss SYM.  Set to nil by `emcp-confirm--dispatch' before invoking
 the callback, so the buffer-local `kill-buffer-hook' is a no-op on the
 decision path.")
+
+(defvar-local emcp-confirm--ready-time nil
+  "Time after which the confirm buffer accepts input.")
+
+(defun emcp-confirm--block-input ()
+  "Buffer-local `pre-command-hook' that drops input during the grace period."
+  (if-let* ((ready emcp-confirm--ready-time)
+            ((time-less-p (current-time) ready)))
+      (progn
+        (setq this-command #'ignore)
+        (message "Ignoring input for %dms (customize with emcp-confirm-input-delay)"
+                 (round emcp-confirm-input-delay 0.001)))
+    (setq emcp-confirm--ready-time nil)
+    (remove-hook 'pre-command-hook #'emcp-confirm--block-input t)))
 
 (define-derived-mode emcp-confirm-mode special-mode "EMCP-confirm"
   "Major mode for EMCP confirmation buffers."
@@ -366,7 +392,13 @@ Returns the buffer."
       (setq emcp-confirm--pending
             (list :server server :session session :context context
                   :on-dismiss on-dismiss :callback callback))
-      (add-hook 'kill-buffer-hook #'emcp-confirm--on-kill nil t))
+      (add-hook 'kill-buffer-hook #'emcp-confirm--on-kill nil t)
+      ;; Prevent input for a configurable time to avoid accidental decisions
+      (when (and (numberp emcp-confirm-input-delay)
+                 (> emcp-confirm-input-delay 0))
+        (setq emcp-confirm--ready-time
+              (time-add (current-time) emcp-confirm-input-delay))
+        (add-hook 'pre-command-hook #'emcp-confirm--block-input nil t)))
     (pop-to-buffer buf '((display-buffer-in-side-window)
                          (side . bottom)
                          (window-height . 0.4)))
