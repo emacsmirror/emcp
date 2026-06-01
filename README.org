@@ -1,5 +1,6 @@
 #+title: EMCP - Lets your agent talk to Emacs
 #+author: Marten Lienen
+#+options: toc:nil
 
 EMCP lets your LLM agent interact with Emacs. The agent can look up documentation and definitions, take screenshots, read buffers, execute code and more. Exactly which [[#built-in-prompts][prompts]], [[#built-in-resources][resources]] and [[#built-in-tools][tools]] are available to the agent depends on the active [[#profiles][profile]].
 
@@ -10,6 +11,8 @@ I am adding tools etc. to the project as I need them and find a usable design fo
 #+caption: Claude Code in agent-shell using EMCP to develop =emcp-session-manager=
 #+attr_html: :width 640
 [[./media/demo.webp]]
+
+#+TOC: headlines 3
 
 * Installation
 
