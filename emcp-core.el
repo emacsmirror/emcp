@@ -325,6 +325,7 @@ and RESPONSE is the JSON-RPC response."
          (capabilities (emcp--server-capabilities server))
          (session (list :id (emcp--make-session-id)
                         :state 'initializing
+                        :created (current-time)
                         :protocol-version protocol-version
                         :client-capabilities (gethash "capabilities" params)
                         :server-capabilities capabilities

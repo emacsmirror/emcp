@@ -148,6 +148,12 @@ one of `accept', `reject' or `ask'."
         (abbreviate-file-name path))
       (plist-get root :uri)))
 
+(defun emcp-session-manager--session-sort-key (session)
+  "Return a sort key for SESSION."
+  (list (or (plist-get (car (plist-get session :roots)) :path)
+            (emcp--session-label session))
+        (- (float-time (plist-get session :created)))))
+
 ;;; Section insertion
 
 (defun emcp-session-manager--insert-session (profile session)
@@ -166,6 +172,9 @@ one of `accept', `reject' or `ask'."
         (format "  [%s]" (substring id 0 (min 8 (length id)))))
       (insert (format "    State:          %s\n"
                       (or (plist-get session :state) "?")))
+      (when-let* ((created (plist-get session :created)))
+        (insert (format "    Created:        %s\n"
+                        (format-time-string "%Y-%m-%d %H:%M:%S" created))))
       (when-let* ((client (emcp-session-manager--client-info session)))
         (insert (format "    Client:         %s\n" client)))
       (when-let* ((roots (plist-get session :roots)))
@@ -195,7 +204,8 @@ one of `accept', `reject' or `ask'."
   (let* ((profile (car entry))
          (server (cdr entry))
          (url (ignore-errors (emcp-server-url server)))
-         (sessions (hash-table-values (emcp--server-sessions server))))
+         (sessions (sort (hash-table-values (emcp--server-sessions server))
+                         :key #'emcp-session-manager--session-sort-key)))
     (magit-insert-section (emcp-server profile)
       (magit-insert-heading
         (emcp-session-manager--propertize (format "[%s]" profile)
