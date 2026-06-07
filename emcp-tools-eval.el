@@ -190,7 +190,8 @@ Used only for logging.  The result is one of:
       (let ((value (eval form t)))
         (funcall send-result
                  `((content . [((type . "text")
-                                (text . ,(prin1-to-string value)))]))))
+                                (text . ,(format "```emacs-lisp\n%s\n```"
+                                                 (prin1-to-string value))))]))))
     (error
      (funcall send-result
               `((content . [((type . "text")

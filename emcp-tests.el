@@ -829,7 +829,7 @@ seconds to milliseconds while still exercising the same code paths."
                                    '((code . "(+ 40 2)"))
       (let ((text (alist-get 'text (aref (alist-get 'content
                                                     (alist-get 'result response)) 0))))
-        (should (equal text "42"))))))
+        (should (equal text "```emacs-lisp\n42\n```"))))))
 
 (ert-deftest emcp-tests-eval-tool-default-reject ()
   (let ((emcp-tools-eval-default-policy nil))
@@ -866,7 +866,7 @@ seconds to milliseconds while still exercising the same code paths."
                                    '((code . "(setq emcp-tests--probe 1) (1+ emcp-tests--probe)"))
       (let ((text (alist-get 'text (aref (alist-get 'content
                                                     (alist-get 'result response)) 0))))
-        (should (equal text "2"))
+        (should (equal text "```emacs-lisp\n2\n```"))
         (should (= emcp-tests--probe 1))))))
 
 ;;; Send-keys tool
