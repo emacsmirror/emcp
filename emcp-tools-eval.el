@@ -184,30 +184,18 @@ Used only for logging.  The result is one of:
       'user)
      (t 'default))))
 
-(defun emcp-tools-eval--format-result (form output)
-  "Render FORM and OUTPUT as a Markdown reply with two fenced blocks.
-
-The first block holds the evaluated code, the second its OUTPUT.  Both
-are tagged `emacs-lisp' so a Markdown-aware client (e.g. agent-shell)
-applies syntax highlighting and lets the user fold the code block."
-  (format "```emacs-lisp\n%s\n```\n\n```emacs-lisp\n%s\n```"
-          (string-trim (pp-to-string form))
-          (string-trim output)))
-
 (defun emcp-tools-eval--eval-form (form send-result)
   "Evaluate FORM and call SEND-RESULT with the MCP tool result alist."
   (condition-case err
       (let ((value (eval form t)))
         (funcall send-result
                  `((content . [((type . "text")
-                                (text . ,(emcp-tools-eval--format-result
-                                          form (pp-to-string value))))]))))
+                                (text . ,(prin1-to-string value)))]))))
     (error
      (funcall send-result
               `((content . [((type . "text")
-                             (text . ,(emcp-tools-eval--format-result
-                                       form (format "Error: %s"
-                                                    (error-message-string err)))))])
+                             (text . ,(format "Error: %s"
+                                              (error-message-string err))))])
                 (isError . t))))))
 
 (emcp-deftool emcp-tools-eval
