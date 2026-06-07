@@ -187,11 +187,16 @@ Used only for logging.  The result is one of:
 (defun emcp-tools-eval--eval-form (form send-result)
   "Evaluate FORM and call SEND-RESULT with the MCP tool result alist."
   (condition-case err
-      (let ((value (eval form t)))
+      (let* ((value (eval form t))
+             ;; Send strings as is to avoid double quoting and
+             ;; escaping newlines etc. This simplifies the output for
+             ;; the agent and is usually not a problem, because the
+             ;; agent wrote the code, so they know which type of value
+             ;; to expect.
+             (printed (if (stringp value) value (prin1-to-string value))))
         (funcall send-result
                  `((content . [((type . "text")
-                                (text . ,(format "```emacs-lisp\n%s\n```"
-                                                 (prin1-to-string value))))]))))
+                                (text . ,(format "```emacs-lisp\n%s\n```" printed)))]))))
     (error
      (funcall send-result
               `((content . [((type . "text")
@@ -209,6 +214,10 @@ a session-wide accept or reject mode for trusted or untrusted sessions."
   :name "eval"
   :description "Evaluate Emacs Lisp code in the running Emacs instance and return the
 value of the final form.
+
+The return value is printed with prin1-to-string unless it is a string.
+Strings are returned directly to simplify the output and avoid double
+quoting and escape sequences.
 
 Each evaluation is gated by a user-controlled approval system.  The call
 may block until the user approves it.

@@ -831,6 +831,25 @@ seconds to milliseconds while still exercising the same code paths."
                                                     (alist-get 'result response)) 0))))
         (should (equal text "```emacs-lisp\n42\n```"))))))
 
+(ert-deftest emcp-tests-eval-tool-string-verbatim ()
+  ;; A string result is printed verbatim, without quotes or escaping.
+  (let ((emcp-tools-eval-default-policy t))
+    (emcp-tests-with-tool-response response 'emcp-tools-eval
+                                   '((code . "(concat \"fo\\\"o\" \"bar\")"))
+      (let ((text (alist-get 'text (aref (alist-get 'content
+                                                    (alist-get 'result response)) 0))))
+        (should (equal text "```emacs-lisp\nfo\"obar\n```"))))))
+
+(ert-deftest emcp-tests-eval-tool-non-string-prin1 ()
+  ;; A non-string result is printed with prin1, so a list of strings stays
+  ;; unambiguous and re-readable.
+  (let ((emcp-tools-eval-default-policy t))
+    (emcp-tests-with-tool-response response 'emcp-tools-eval
+                                   '((code . "(list \"a\" \"b\")"))
+      (let ((text (alist-get 'text (aref (alist-get 'content
+                                                    (alist-get 'result response)) 0))))
+        (should (equal text "```emacs-lisp\n(\"a\" \"b\")\n```"))))))
+
 (ert-deftest emcp-tests-eval-tool-default-reject ()
   (let ((emcp-tools-eval-default-policy nil))
     (emcp-tests-with-tool-response response 'emcp-tools-eval
