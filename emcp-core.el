@@ -91,7 +91,8 @@ evaluate BODY for a message.  If the message is nil, nothing is logged."
     `(when-let* ((,log-buffer (emcp--server-log-buffer ,server))
                  ((buffer-live-p ,log-buffer)))
        (with-current-buffer ,log-buffer
-         (let* ((,point-at-max (equal (point) (point-max)))
+         (let* ((inhibit-read-only t)
+                (,point-at-max (equal (point) (point-max)))
                 (,level-pos (seq-position emcp-log-levels emcp-log-level))
                 (,session-var ,session))
            (save-excursion
@@ -231,7 +232,9 @@ description and DATA is arbitrary data related to the error."
                             (:copier nil))
   "An MCP server."
   (name "emcp" :type 'string :documentation "Server name")
-  (log-buffer (generate-new-buffer (format "*%s*" name)))
+  (log-buffer (with-current-buffer (generate-new-buffer (format "*%s*" name))
+                (setq buffer-read-only t)
+                (current-buffer)))
   transport
   (sessions (make-hash-table :test 'equal) :type 'hash-table
             :documentation "Active client sessions.")
