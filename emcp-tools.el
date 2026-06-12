@@ -88,62 +88,67 @@ TYPE is one of `defun', `defvar', `defface', `feature'.
 
 Return a plist (:file FILE :line LINE :source SOURCE) or nil if not
 found."
-  (if (and (eq type 'feature) (featurep symbol))
-      (let ((file (find-library-name (symbol-name symbol))))
-        `( :file ,file
-           :source ,(with-temp-buffer
-                      (insert-file-contents file)
-                      (buffer-string))))
-    (if-let* ((file (symbol-file symbol type)))
-        (pcase-let ((`(,buf . ,pos)
-                     (find-function-search-for-symbol symbol
-                                                      (if (eq type 'defun) nil type)
-                                                      file)))
-          (when (and buf pos)
-            (with-current-buffer buf
-              (goto-char pos)
-              (let* ((file (or (buffer-file-name buf) (buffer-name buf)))
-                     (line (line-number-at-pos pos))
-                     (end (save-excursion
-                            (forward-sexp 1)
-                            (point)))
-                     (source (buffer-substring-no-properties
-                              pos (min end (+ pos 2000)))))
-                (list :file file :line line :source source)))))
-      ;; symbol-file returned nil. Is it a C function or variable?
-      (when-let* ((c-file (cond
-                           ((eq type 'defun)
-                            (help-C-file-name symbol 'subr))
-                           ((eq type 'defvar)
-                            (help-C-file-name symbol 'var)))))
-        (if find-function-C-source-directory
-            (let* ((emacs-dir (file-name-directory find-function-C-source-directory))
-                   (file (expand-file-name c-file emacs-dir))
-                   (type (if (eq type 'defun) nil type)))
-              (pcase-let ((`(,buf . ,pos) (find-function-C-source symbol file type)))
-                (if (and buf pos)
-                    (with-current-buffer buf
-                      (goto-char pos)
-                      (let* ((file (or (buffer-file-name buf) (buffer-name buf)))
-                             (line (line-number-at-pos pos))
-                             (end (save-excursion
-                                    (if (eq type 'defvar)
-                                        (progn
+  ;; Read the definitions without applying file- or dir-local
+  ;; variables, so that we do not prompt the user or modify Emacs
+  ;; state.
+  (let ((enable-local-variables nil)
+        (enable-dir-local-variables nil))
+    (if (and (eq type 'feature) (featurep symbol))
+        (let ((file (find-library-name (symbol-name symbol))))
+          `( :file ,file
+             :source ,(with-temp-buffer
+                        (insert-file-contents file)
+                        (buffer-string))))
+      (if-let* ((file (symbol-file symbol type)))
+          (pcase-let ((`(,buf . ,pos)
+                       (find-function-search-for-symbol symbol
+                                                        (if (eq type 'defun) nil type)
+                                                        file)))
+            (when (and buf pos)
+              (with-current-buffer buf
+                (goto-char pos)
+                (let* ((file (or (buffer-file-name buf) (buffer-name buf)))
+                       (line (line-number-at-pos pos))
+                       (end (save-excursion
+                              (forward-sexp 1)
+                              (point)))
+                       (source (buffer-substring-no-properties
+                                pos (min end (+ pos 2000)))))
+                  (list :file file :line line :source source)))))
+        ;; symbol-file returned nil. Is it a C function or variable?
+        (when-let* ((c-file (cond
+                             ((eq type 'defun)
+                              (help-C-file-name symbol 'subr))
+                             ((eq type 'defvar)
+                              (help-C-file-name symbol 'var)))))
+          (if find-function-C-source-directory
+              (let* ((emacs-dir (file-name-directory find-function-C-source-directory))
+                     (file (expand-file-name c-file emacs-dir))
+                     (type (if (eq type 'defun) nil type)))
+                (pcase-let ((`(,buf . ,pos) (find-function-C-source symbol file type)))
+                  (if (and buf pos)
+                      (with-current-buffer buf
+                        (goto-char pos)
+                        (let* ((file (or (buffer-file-name buf) (buffer-name buf)))
+                               (line (line-number-at-pos pos))
+                               (end (save-excursion
+                                      (if (eq type 'defvar)
+                                          (progn
+                                            (forward-sexp)
+                                            (point))
+                                        (save-restriction
+                                          ;; Heuristic to narrow to the definition of the
+                                          ;; DEFUN macro
                                           (forward-sexp)
-                                          (point))
-                                      (save-restriction
-                                        ;; Heuristic to narrow to the definition of the
-                                        ;; DEFUN macro
-                                        (forward-sexp)
-                                        (forward-line)
-                                        (narrow-to-defun)
-                                        (point-max)))))
-                             (source (buffer-substring-no-properties pos end)))
-                        (list :file file :line line :source source)))
-                  (list :file (format "C source (%s)" c-file)
-                        :source "Definition not found in C source. The source version may not match the running Emacs."))))
-          (list :file (format "C source (%s)" c-file)
-                :source (format "C source is not available. Set `find-function-C-source-directory' to the Emacs source directory to enable navigating to C definitions.")))))))
+                                          (forward-line)
+                                          (narrow-to-defun)
+                                          (point-max)))))
+                               (source (buffer-substring-no-properties pos end)))
+                          (list :file file :line line :source source)))
+                    (list :file (format "C source (%s)" c-file)
+                          :source "Definition not found in C source. The source version may not match the running Emacs."))))
+            (list :file (format "C source (%s)" c-file)
+                  :source (format "C source is not available. Set `find-function-C-source-directory' to the Emacs source directory to enable navigating to C definitions."))))))))
 
 (emcp-deftool emcp-tools-find-definition
     ((symbol "Name of the symbol to look up.")
