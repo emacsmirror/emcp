@@ -43,6 +43,17 @@ To use EMCP in agent-shell, add it to ~agent-shell-mcp-servers~ as follows
 
 If ~emcp-default-profile~ is nil, you can choose a different profile for each session interactively. EMCP takes care to start at most one server per profile.
 
+*** [[https://github.com/karthink/gptel][gptel]]
+
+The following snippet should, in theory, be enough to integrate EMCP into gptel if you have already activated gptel's MCP integration:
+
+#+begin_src emacs-lisp
+  (setq mcp-hub-servers
+        `(("emcp" . (:url ,(emcp-server-url (emcp-start emcp-default-profile))))))
+#+end_src
+
+However, as of June 14, 2026 [[https://github.com/lizqwerscott/mcp.el][mcp.el]] only supports the =2024-11-05= and =2025-03-26= versions of the MCP specification and EMCP implements =2025-11-25=.
+
 *** Non-Emacs clients like Claude Code, Codex, etc.
 
 To use EMCP in non-Emacs clients, set ~emcp-http-port~ to a number of your choice to start the server at a deterministic address, for example
