@@ -87,7 +87,7 @@ plain `face' property, so faces have to also be set under
   "e" #'emcp-session-manager-cycle-eval-mode
   "K" #'emcp-session-manager-cycle-send-keys-mode
   "l" #'emcp-session-manager-show-log
-  "k" #'emcp-session-manager-kill-server)
+  "k" #'emcp-session-manager-kill)
 
 (define-derived-mode emcp-session-manager-mode magit-section-mode "EMCP-Sessions"
   "Major mode for the EMCP session manager."
@@ -355,11 +355,37 @@ LABEL is a string describing the mode for the user-facing message."
 (defun emcp-session-manager-kill-server ()
   "Kill the server enclosing point after confirmation."
   (interactive)
-  (pcase-let* ((`(,profile . ,_server) (emcp-session-manager--server-at-point)))
-    (when (yes-or-no-p (format "Kill EMCP server `%s'? " profile))
+  (pcase-let* ((`(,profile . ,_server) (emcp-session-manager--server-at-point))
+               (name (emcp-session-manager--propertize (symbol-name profile)
+                                                        'emcp-session-manager-server)))
+    (when (yes-or-no-p (format "Kill server %s? " name))
       (emcp-stop profile)
       (emcp-session-manager-refresh)
-      (message "Stopped %s" profile))))
+      (message "Stopped %s" name))))
+
+(defun emcp-session-manager-kill-session ()
+  "Kill the session at point after confirmation."
+  (interactive)
+  (pcase-let* ((`(,_profile ,server ,session) (emcp-session-manager--session-at-point))
+               (name (emcp-session-manager--propertize (emcp--session-label session)
+                                                        'emcp-session-manager-session)))
+    (when (yes-or-no-p (format "Kill session %s? " name))
+      (when-let* ((channel (plist-get session :client-channel)))
+        (funcall channel nil))
+      (emcp--server-delete-session server session)
+      (emcp-session-manager-refresh)
+      (message "Killed session %s" name))))
+
+(defun emcp-session-manager-kill ()
+  "Kill the session or server at point after confirmation.
+
+Kill the session when point is on a session, or the server when point is
+on a server section but not one of its sessions."
+  (interactive)
+  (if (emcp-session-manager--ancestor 'emcp-session)
+      (emcp-session-manager-kill-session)
+    (emcp-session-manager-kill-server)))
+
 ;;;###autoload
 (defun emcp-session-manager ()
   "Pop up the EMCP session manager.
