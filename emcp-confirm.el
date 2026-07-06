@@ -392,17 +392,21 @@ Returns the buffer."
       (setq emcp-confirm--pending
             (list :server server :session session :context context
                   :on-dismiss on-dismiss :callback callback))
-      (add-hook 'kill-buffer-hook #'emcp-confirm--on-kill nil t)
-      ;; Prevent input for a configurable time to avoid accidental decisions
+      (add-hook 'kill-buffer-hook #'emcp-confirm--on-kill nil t))
+    (pop-to-buffer buf '((display-buffer-in-side-window)
+                         (side . bottom)
+                         (window-height . 0.4)))
+    (emcp-confirm--maybe-notify server session title buf)
+    ;; Force the buffer onto the screen before starting the
+    ;; input-delay countdown, so that the delay counts against the
+    ;; actual time the buffer is visible.
+    (redisplay t)
+    (with-current-buffer buf
       (when (and (numberp emcp-confirm-input-delay)
                  (> emcp-confirm-input-delay 0))
         (setq emcp-confirm--ready-time
               (time-add (current-time) emcp-confirm-input-delay))
         (add-hook 'pre-command-hook #'emcp-confirm--block-input nil t)))
-    (pop-to-buffer buf '((display-buffer-in-side-window)
-                         (side . bottom)
-                         (window-height . 0.4)))
-    (emcp-confirm--maybe-notify server session title buf)
     buf))
 
 (provide 'emcp-confirm)
