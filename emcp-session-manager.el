@@ -35,6 +35,7 @@
 ;; Declared in emcp.el; avoid a circular `require'.
 (defvar emcp--servers)
 (declare-function emcp-server-url "emcp" (server))
+(declare-function emcp-stop "emcp" (profile))
 
 (defgroup emcp-session-manager ()
   "Session manager UI for EMCP."
@@ -84,8 +85,9 @@ plain `face' property, so faces have to also be set under
   :parent magit-section-mode-map
   "g" #'emcp-session-manager-refresh
   "e" #'emcp-session-manager-cycle-eval-mode
-  "k" #'emcp-session-manager-cycle-send-keys-mode
-  "l" #'emcp-session-manager-show-log)
+  "K" #'emcp-session-manager-cycle-send-keys-mode
+  "l" #'emcp-session-manager-show-log
+  "k" #'emcp-session-manager-kill-server)
 
 (define-derived-mode emcp-session-manager-mode magit-section-mode "EMCP-Sessions"
   "Major mode for the EMCP session manager."
@@ -112,8 +114,14 @@ one of `accept', `reject' or `ask'."
 
 ;;; Rendering helpers
 
-(defun emcp-session-manager--mode-line (label active key-hint)
-  "Render LABEL: mode1 mode2 mode3 with ACTIVE highlighted plus KEY-HINT."
+(defun emcp-session-manager--key-hint (command)
+  "Return a string describing the key bound to COMMAND in the session manager."
+  (if-let* ((keys (where-is-internal command emcp-session-manager-mode-map t)))
+      (key-description keys)
+    (format "M-x %s" command)))
+
+(defun emcp-session-manager--mode-line (label active command)
+  "Render LABEL: mode1 mode2 mode3 with ACTIVE highlighted plus a hint for COMMAND."
   (concat
    (format "%-16s" (concat label ":"))
    (mapconcat
@@ -126,7 +134,7 @@ one of `accept', `reject' or `ask'."
     emcp-session-manager--modes
     " ")
    "   ("
-   (emcp-session-manager--propertize (string key-hint)
+   (emcp-session-manager--propertize (emcp-session-manager--key-hint command)
                                      'emcp-session-manager-key)
    " to cycle)"))
 
@@ -175,6 +183,9 @@ one of `accept', `reject' or `ask'."
       (when-let* ((created (plist-get session :created)))
         (insert (format "    Created:        %s\n"
                         (format-time-string "%Y-%m-%d %H:%M:%S" created))))
+      (when-let* ((last-message (plist-get session :last-message-time)))
+        (insert (format "    Last message:   %s\n"
+                        (format-time-string "%Y-%m-%d %H:%M:%S" last-message))))
       (when-let* ((client (emcp-session-manager--client-info session)))
         (insert (format "    Client:         %s\n" client)))
       (when-let* ((roots (plist-get session :roots)))
@@ -182,10 +193,12 @@ one of `accept', `reject' or `ask'."
         (dolist (root roots)
           (insert (format "      %s\n" (emcp-session-manager--root-label root)))))
       (insert "    "
-              (emcp-session-manager--mode-line "Eval" eval-mode ?e)
+              (emcp-session-manager--mode-line
+               "Eval" eval-mode #'emcp-session-manager-cycle-eval-mode)
               "\n")
       (insert "    "
-              (emcp-session-manager--mode-line "Send-keys" send-keys-mode ?k)
+              (emcp-session-manager--mode-line
+               "Send-keys" send-keys-mode #'emcp-session-manager-cycle-send-keys-mode)
               "\n\n"))))
 
 (defun emcp-session-manager--insert-log-line (server)
@@ -339,6 +352,14 @@ LABEL is a string describing the mode for the user-facing message."
       (user-error "Log buffer for `%s' no longer exists" profile))
     (pop-to-buffer buf)))
 
+(defun emcp-session-manager-kill-server ()
+  "Kill the server enclosing point after confirmation."
+  (interactive)
+  (pcase-let* ((`(,profile . ,_server) (emcp-session-manager--server-at-point)))
+    (when (yes-or-no-p (format "Kill EMCP server `%s'? " profile))
+      (emcp-stop profile)
+      (emcp-session-manager-refresh)
+      (message "Stopped %s" profile))))
 ;;;###autoload
 (defun emcp-session-manager ()
   "Pop up the EMCP session manager.

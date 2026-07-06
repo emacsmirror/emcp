@@ -329,6 +329,7 @@ and RESPONSE is the JSON-RPC response."
          (session (list :id (emcp--make-session-id)
                         :state 'initializing
                         :created (current-time)
+                        :last-message-time (current-time)
                         :protocol-version protocol-version
                         :client-capabilities (gethash "capabilities" params)
                         :server-capabilities capabilities
@@ -366,6 +367,10 @@ and RESPONSE is the JSON-RPC response."
 (defun emcp--server-get-session (server session-id)
   "Get session with id SESSION-ID from SERVER."
   (gethash session-id (emcp--server-sessions server)))
+
+(defun emcp--session-touch (session)
+  "Record that SESSION just received a message."
+  (plist-put session :last-message-time (current-time)))
 
 (defun emcp--make-session-id ()
   "Create a new session id.
@@ -457,6 +462,7 @@ request."
   "Handle the MCP JSON-RPC2.0 request REQUEST on SERVER in SESSION.
 
 SEND-RESPONSE is called with the response alist."
+  (emcp--session-touch session)
   (emcp--log server session
     (info
      (let* ((method (gethash "method" request))
@@ -622,6 +628,7 @@ SEND-RESPONSE is called with the response to REQUEST."
 
 (defun emcp--server-on-result (server session response)
   "Handle a successful JSONRPC2.0 RESPONSE on SERVER in SESSION."
+  (emcp--session-touch session)
   (emcp--log server session
     (info (format "Result (%s)" (gethash "id" response)))
     (debug (let ((result (emcp--to-alist (gethash "result" response))))
@@ -637,6 +644,7 @@ SEND-RESPONSE is called with the response to REQUEST."
 
 (defun emcp--server-on-error (server session response)
   "Handle a JSONRPC2.0 error RESPONSE on SERVER in SESSION."
+  (emcp--session-touch session)
   (let* ((id (gethash "id" response))
          (open-requests (emcp--server-open-requests server))
          (error (gethash "error" response))
@@ -706,6 +714,7 @@ notification (which clears the cache first)."
 
 (defun emcp--server-on-notification (server session request)
   "Handle the MCP JSON-RPC2.0 notification REQUEST on SERVER in SESSION."
+  (emcp--session-touch session)
   (emcp--log server session
     (info (format "> Notification %s" (gethash "method" request)))
     (debug (when-let* ((params (gethash "params" request)))
