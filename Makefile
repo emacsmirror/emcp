@@ -41,11 +41,13 @@ checkdoc:
 		           (mapc (function checkdoc-file) (list $(patsubst %,\"%\",$(EL_FILES)))) \
 		           (when (> n 0) (message \"checkdoc: found docstring issues (see warnings above)\") (kill-emacs 1)))"
 
+TEST_FILES ?= $(wildcard test/*-tests.el)
 TEST_SELECTOR ?= t
 test: clean lint
 	$(EMACS) --batch \
 		--eval $(LOAD_PATH) \
-		-l emcp-tests.el \
+		--eval "(add-to-list 'load-path (expand-file-name \"test\"))" \
+		$(patsubst %,-l %,$(TEST_FILES)) \
 		--eval "(ert-run-tests-batch-and-exit '$(TEST_SELECTOR))"
 
 # Clean before to ensure that the docs do not use a stale compiled version of component
