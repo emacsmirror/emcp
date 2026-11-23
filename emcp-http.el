@@ -115,25 +115,23 @@ LOG-LEVEL is the HTTP log level."
               ((not (protocol-versions-match-p session headers))
                (protocol-version-mismatch session headers))
               (t
-               ;; Open an SSE connection for the server to send requests and notifications
+               ;; Open an SSE connection for the server to send notifications
                (cl-flet ((body (send-chunk)
                            (cl-flet
-                               ((send-request (request)
-                                  (condition-case err
-                                      (if request
+                               ((send-notification (notification)
+                                  (condition-case nil
+                                      (if notification
                                           (let ((event (encode-coding-string
-                                                        (format "data: %s\n\n" (json-serialize request))
+                                                        (format "data: %s\n\n" (json-serialize notification))
                                                         'utf-8)))
                                             (funcall send-chunk event :keep-open t))
                                         (funcall send-chunk ""))
+                                    ;; Drop notifications on a closed
+                                    ;; connection
                                     (http-server-client-disconnected
-                                     (emcp--server-on-client-channel-closed server session)
-                                     ;; For notifications, we just drop them
-                                     (when (eq (emcp--jsonrpc-type request) 'request)
-                                       (signal 'emcp-error `("Cannot send request on closed connection:"
-                                                             ,(error-message-string err))))))))
+                                     (emcp--server-on-client-channel-closed server session)))))
                              (emcp--server-on-client-channel
-                              server session #'send-request))))
+                              server session #'send-notification))))
                  (funcall send-response
                           `( :status OK
                              :headers ((Content-Type . "text/event-stream")
@@ -168,10 +166,21 @@ LOG-LEVEL is the HTTP log level."
                                   `( :status OK
                                      :headers ((Content-Type . "application/json"))
                                      :body ,(json-serialize response))))))
-                     ('result
-                      (emcp--server-on-result server session object))
-                     ('error
-                      (emcp--server-on-error server session object))
+                     ((or 'result 'error)
+                      ;; EMCP sends no requests, so we do not expect
+                      ;; to receive any responses
+                      (emcp--session-touch session)
+                      (emcp--log server session
+                        (warning (format "Rejecting unsolicited JSON-RPC response (%s)"
+                                         (gethash "id" object)))
+                        (debug (emcp--prefix-lines "> " (emcp--log-pp (emcp--to-alist object)))))
+                      (let ((response
+                             (emcp--jsonrpc-error nil emcp--jsonrpc-invalid-request
+                                                  "Server sends no requests")))
+                        (funcall send-response
+                                 `( :status Bad-Request
+                                    :headers ((Content-Type . "application/json"))
+                                    :body ,(json-serialize response)))))
                      ('notification
                       (emcp--server-on-notification server session object)
                       (funcall send-response '(:status Accepted)))

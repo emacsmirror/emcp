@@ -4,7 +4,7 @@
 
 EMCP lets your LLM agent interact with Emacs. The agent can look up documentation and definitions, take screenshots, read buffers, execute code and more. Exactly which [[#built-in-prompts][prompts]], [[#built-in-resources][resources]] and [[#built-in-tools][tools]] are available to the agent depends on the active [[#profiles][profile]].
 
-As an MCP implementation, EMCP supports all the core server features from the [[https://modelcontextprotocol.io/specification/2025-11-25/server][2025-11-25 version of the MCP specification]] and even has (as of yet unused) facilities for server-to-client notifications and requests.
+As an MCP implementation, EMCP supports all the core server features from the [[https://modelcontextprotocol.io/specification/2025-11-25/server][2025-11-25 version of the MCP specification]] and even has (as of yet unused) facilities for server-to-client notifications.
 
 I am adding tools etc. to the project as I need them and find a usable design for them. If there is a tool missing which you really want /right now/, EMCP has been designed to be extensible and adding it yourself should be easy and even fun. Just [[#custom-components][follow the instructions]] or hand them to your agent.
 

@@ -27,8 +27,6 @@
 (require 'cl-lib)
 (require 'rx)
 (require 'seq)
-(require 'url-parse)
-(require 'url-util)
 
 (require 'emcp-uri)
 
@@ -196,13 +194,6 @@ for a notification and nil otherwise."
                         ((stringp (gethash "message" error)))))
              'error))))))
 
-(defun emcp--jsonrpc-request (id method params)
-  "Build a request for METHOD with ID and PARAMS."
-  `((jsonrpc . "2.0")
-    (method . ,method)
-    ,@(when params `((params . ,params)))
-    (id . ,id)))
-
 (defun emcp--jsonrpc-notification (method params)
   "Build a notification for METHOD and PARAMS."
   `((jsonrpc . "2.0")
@@ -218,10 +209,11 @@ for a notification and nil otherwise."
 (defun emcp--jsonrpc-error (request code message &optional data)
   "Build an error response to REQUEST.
 
-CODE is an integer error code, MESSAGE is a short human-readable
-description and DATA is arbitrary data related to the error."
+If REQUEST is nil, the response has no id.  CODE is an integer error
+code, MESSAGE is a short human-readable description and DATA is
+arbitrary data related to the error."
   `((jsonrpc . "2.0")
-    (id . ,(gethash "id" request))
+    ,@(when request `((id . ,(gethash "id" request))))
     (error . ((code . ,code)
               (message . ,message)
               ,@(when data `((data . ,data)))))))
@@ -238,9 +230,6 @@ description and DATA is arbitrary data related to the error."
   transport
   (sessions (make-hash-table :test 'equal) :type 'hash-table
             :documentation "Active client sessions.")
-  (next-request-id 1 :type 'int :documentation "Next server-sent request ID")
-  (open-requests (make-hash-table :test 'equal) :type 'hash-table
-                 :documentation "Request IDs and handlers waiting for responses")
   (prompts (make-hash-table :test 'equal) :type 'hash-table
            :documentation "Available prompt templates.")
   (resources (make-hash-table :test 'equal) :type 'hash-table
@@ -334,8 +323,7 @@ and RESPONSE is the JSON-RPC response."
                         :client-capabilities (gethash "capabilities" params)
                         :server-capabilities capabilities
                         :client-info (gethash "clientInfo" params)
-                        :client-channel nil
-                        :roots nil))
+                        :client-channel nil))
          (response (emcp--jsonrpc-result
                     request
                     `((protocolVersion . ,protocol-version)
@@ -398,58 +386,27 @@ This is a copy of `org-id-uuid'."
             (substring rnd 18 20)
             (substring rnd 20 32))))
 
-(defun emcp--server-on-client-channel (server session send-request)
+(defun emcp--server-on-client-channel (server session send-notification)
   "A channel from SERVER to client has been established for SESSION.
 
-The server will call (funcall SEND-REQUEST REQUEST) to send JSON-RPC
-requests and notifications or (funcall SEND-REQUEST nil) to close the
+The server will call (funcall SEND-NOTIFICATION NOTIFICATION) to send
+JSON-RPC notifications or (funcall SEND-NOTIFICATION nil) to close the
 channel."
   (emcp--log server session
     (info (format "Client channel established (%s)" (plist-get session :id))))
   (when-let* ((channel (plist-get session :client-channel)))
     ;; Close the previous channel
     (funcall channel nil))
-  (plist-put session :client-channel send-request)
-  (emcp--server-maybe-fetch-roots server session))
+  (plist-put session :client-channel send-notification))
 
 (defun emcp--server-on-client-channel-closed (_server session)
   "The client channel of SESSION on SERVER has been closed."
   (plist-put session :client-channel nil))
 
-(defun emcp--server-client-channel-p (_server session)
-  "Return t if a client channel for SESSION has been established."
-  (when (plist-get session :client-channel)
-    t))
-
-(cl-defun emcp--server-send-request (server session method &key params on-result on-error)
-  "Send a JSON-RPC request to the SESSION client on SERVER.
-
-METHOD is the method to request and PARAMS are optional parameters for the
-request.
-
-When the client sends a response, (ON-RESULT RESULT) will be called on
-success.  If the response is an error (ON-ERROR CODE MESSAGE DATA) will
-be called instead."
-  (if-let* ((channel (plist-get session :client-channel)))
-      (let ((id (prog1 (emcp--server-next-request-id server)
-                  (cl-incf (emcp--server-next-request-id server))))
-            (handlers (cons (if on-result on-result #'ignore)
-                            (if on-error on-error #'ignore))))
-        (emcp--log server session
-          (info (format "< Request %s (%s)" method id))
-          (debug (if params
-                     (emcp--prefix-lines "> " (emcp--log-pp params))
-                   "No parameters")))
-        (puthash id handlers (emcp--server-open-requests server))
-        (funcall channel (emcp--jsonrpc-request id method params)))
-    (emcp--log server session
-      (warning "Tried to send notification, but no open channel"))))
-
 (cl-defun emcp--server-send-notification (server session method &key params)
   "Send a JSON-RPC notification to the SESSION client on SERVER.
 
-METHOD is the method to request and PARAMS are optional parameters for the
-request."
+METHOD is the notification method and PARAMS are its optional parameters."
   (when-let* ((channel (plist-get session :client-channel)))
     (emcp--log server session
       (info (format "< Notification %s" method))
@@ -626,92 +583,6 @@ SEND-RESPONSE is called with the response to REQUEST."
                 (funcall send-response (emcp--jsonrpc-error request code message data))))
       (funcall tool server session #'send-result #'send-error args))))
 
-(defun emcp--server-on-result (server session response)
-  "Handle a successful JSONRPC2.0 RESPONSE on SERVER in SESSION."
-  (emcp--session-touch session)
-  (emcp--log server session
-    (info (format "Result (%s)" (gethash "id" response)))
-    (debug (let ((result (emcp--to-alist (gethash "result" response))))
-             (emcp--prefix-lines "> " (emcp--log-pp result)))))
-  (let ((id (gethash "id" response))
-        (open-requests (emcp--server-open-requests server)))
-    (if-let* ((handler (gethash id open-requests)))
-        (pcase-let ((`(,on-result . ,_) handler))
-          (funcall on-result (gethash "result" response))
-          (remhash id open-requests))
-      (emcp--log server session
-        (warning (format "Unexpected response ID %s" id))))))
-
-(defun emcp--server-on-error (server session response)
-  "Handle a JSONRPC2.0 error RESPONSE on SERVER in SESSION."
-  (emcp--session-touch session)
-  (let* ((id (gethash "id" response))
-         (open-requests (emcp--server-open-requests server))
-         (error (gethash "error" response))
-         (code (gethash "code" error))
-         (message (gethash "message" error))
-         (data (gethash "data" error)))
-    (emcp--log server session
-      (info (format "Error %s (%s): %s" code id message))
-      (debug (emcp--prefix-lines "> " (emcp--log-pp (emcp--to-alist data)))))
-    (if-let* ((handler (gethash id open-requests)))
-        (pcase-let ((`(,_ . ,on-error) handler))
-          (funcall on-error code message data)
-          (remhash id open-requests))
-      (emcp--log server session
-        (warning (format "Unexpected response ID %s" id))))))
-
-(defun emcp--normalize-root (root)
-  "Normalize a ROOT object from a \"roots/list\" response.
-
-ROOT is a hash table with a \"uri\" key and an optional \"name\" key.
-The returned plist has:
-  :uri   The URI exactly as the client sent it.
-  :path  The decoded local filesystem path for \"file://\" URIs.
-  :name  The client-provided name, or nil if absent."
-  (when (hash-table-p root)
-    (let* ((uri (gethash "uri" root))
-           (name (gethash "name" root))
-           (parsed (url-generic-parse-url uri))
-           (path (when (equal (url-type parsed) "file")
-                   (url-unhex-string (url-filename parsed)))))
-      (list :uri uri :path path :name name))))
-
-(defun emcp--server-fetch-roots (server session)
-  "Request filesystem roots for a SESSION and store them in its :roots property.
-
-SERVER is the server for SESSION."
-  (emcp--server-send-request
-   server session "roots/list"
-   :on-result (lambda (result)
-                (plist-put session :roots
-                           (when (hash-table-p result)
-                             (mapcar #'emcp--normalize-root
-                                     (gethash "roots" result)))))
-   :on-error (lambda (code message _data)
-               (emcp--log server session
-                 (warning (format "roots/list failed: %s (%s)" message code))))))
-
-(defun emcp--client-supports-roots-p (session)
-  "Return non-nil if SESSION's client declared the \"roots\" capability."
-  (let ((caps (plist-get session :client-capabilities)))
-    (and (hash-table-p caps) (gethash "roots" caps))))
-
-(defun emcp--server-maybe-fetch-roots (server session)
-  "Fetch SESSION's roots from SERVER's client if the time is right.
-
-Requires the client to declare the \"roots\" capability, the session to
-have completed initialization, a client channel to be open, and no
-roots to be cached yet.  This is the single policy gate shared by the
-three events that may trigger a fetch: the \"initialized\" notification,
-the establishment of a client channel, and the \"roots/list_changed\"
-notification (which clears the cache first)."
-  (when (and (emcp--client-supports-roots-p session)
-             (eq (plist-get session :state) 'up)
-             (emcp--server-client-channel-p server session)
-             (not (plist-get session :roots)))
-    (emcp--server-fetch-roots server session)))
-
 (defun emcp--server-on-notification (server session request)
   "Handle the MCP JSON-RPC2.0 notification REQUEST on SERVER in SESSION."
   (emcp--session-touch session)
@@ -730,12 +601,7 @@ notification (which clears the cache first)."
        (when (eq (plist-get session :state) 'initializing)
          (plist-put session :state 'up)
          (emcp--log server session
-           (debug "Initialization complete"))
-         (emcp--server-maybe-fetch-roots server session)))
-      ("notifications/roots/list_changed"
-       ;; Clear the old roots since they are invalid now, which also signals a re-fetch
-       (plist-put session :roots nil)
-       (emcp--server-maybe-fetch-roots server session)))))
+           (debug "Initialization complete")))))))
 
 (defun emcp--session-label (session)
   "Format a short, human-readable label for SESSION."
@@ -743,15 +609,8 @@ notification (which clears the cache first)."
          (title (and (hash-table-p info)
                      (or (gethash "title" info)
                          (gethash "name" info))))
-         (root (car (plist-get session :roots)))
-         (root-name (or (plist-get root :name)
-                        (when-let* ((path (plist-get root :path)))
-                          (file-name-nondirectory
-                           (directory-file-name path)))))
-         (detail (or root-name
-                     (let ((id (plist-get session :id)))
-                       (and id (substring id 0 (min 8 (length id)))))
-                     "?")))
+         (id (plist-get session :id))
+         (detail (if id (substring id 0 (min 8 (length id))) "?")))
     (if title
         (format "%s (%s)" title detail)
       (format "(%s)" detail))))

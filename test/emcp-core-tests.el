@@ -284,7 +284,7 @@
           (should (equal (alist-get 'message (alist-get 'error response))
                          "No greeting for you")))))))
 
-;;; Server requests & notifications
+;;; Server notifications
 
 (ert-deftest emcp-tests-send-server-notification ()
   (emcp-test-with-server server (emcp--server-build)
@@ -300,108 +300,6 @@
                      '((jsonrpc . "2.0")
                        (method . "test/notification")
                        (params . ((name . "emcp")))))))))
-
-(ert-deftest emcp-tests-send-server-request ()
-  (emcp-test-with-server server (emcp--server-build)
-    (let* (request
-           (client (emcp-test-client-init-session
-                    server
-                    :on-request (lambda (r) (setq request r))))
-           (session (emcp-test-client-session client))
-           result error)
-      (emcp--server-send-request
-       server session "test/succeed"
-       :params '((name . "emcp"))
-       :on-result (lambda (r) (setq result r))
-       :on-error (lambda (code message data)
-                   (setq error (list code message data))))
-      (should (equal request
-                     '((jsonrpc . "2.0")
-                       (method . "test/succeed")
-                       (params . ((name . "emcp")))
-                       (id . 1))))
-      (emcp--server-on-result server session (emcp-test-to-hash-table '((jsonrpc . "2.0")
-                                                                        (result . "success")
-                                                                        (id . 1))))
-      (should (equal result "success"))
-      (should (not error))
-      (setq result nil
-            error nil)
-      (emcp--server-send-request
-       server session "test/fail"
-       :on-result (lambda (r) (setq result r))
-       :on-error (lambda (code message data)
-                   (setq error (list code message data))))
-      (should (equal request
-                     '((jsonrpc . "2.0")
-                       (method . "test/fail")
-                       (id . 2))))
-      (emcp--server-on-error server session (emcp-test-to-hash-table '((jsonrpc . "2.0")
-                                                                       (error . ((code . 128)
-                                                                                 (message . "miserably")
-                                                                                 (data . "some data")))
-                                                                       (id . 2))))
-      (should (not result))
-      (should (equal error '(128 "miserably" "some data"))))))
-
-;;; Roots and session labels
-
-(ert-deftest emcp-tests-fetch-roots-on-initialized ()
-  ;; A client that declares "roots" capability receives a "roots/list" request right after
-  ;; "notifications/initialized", and the normalized response is stored on the session.
-  (emcp-test-with-server server (emcp--server-build)
-    (let* (requests
-           (client (emcp-test-client-init-session
-                    server
-                    :capabilities '((roots . ((listChanged . t))))
-                    :on-request (lambda (r) (push r requests))))
-           (session (emcp-test-client-session client))
-           (request (car requests)))
-      (should (equal (alist-get 'method request) "roots/list"))
-      (emcp--server-on-result
-       server session
-       (emcp-test-to-hash-table `((jsonrpc . "2.0")
-                                  (id . ,(alist-get 'id request))
-                                  (result . ((roots . [((uri . "file:///path/to/emcp")
-                                                        (name . "emcp"))]))))))
-      (let ((roots (plist-get session :roots)))
-        (should (= (length roots) 1))
-        (should (equal (plist-get (car roots) :name) "emcp"))
-        (should (equal (plist-get (car roots) :path) "/path/to/emcp"))))))
-
-(ert-deftest emcp-tests-fetch-roots-on-list-changed ()
-  ;; "notifications/roots/list_changed" clears the cached roots, triggers a fresh
-  ;; "roots/list", and the new result replaces them.
-  (emcp-test-with-server server (emcp--server-build)
-    (let* (requests
-           (client (emcp-test-client-init-session
-                    server
-                    :capabilities '((roots . ((listChanged . t))))
-                    :on-request (lambda (r) (push r requests))))
-           (session (emcp-test-client-session client)))
-      ;; Resolve the initial fetch with one root.
-      (let ((req (pop requests)))
-        (emcp--server-on-result
-         server session
-         (emcp-test-to-hash-table `((jsonrpc . "2.0")
-                                    (id . ,(alist-get 'id req))
-                                    (result . ((roots . [((uri . "file:///old")
-                                                          (name . "old"))])))))))
-      ;; Now signal that the list changed; a new request should be sent.
-      (emcp--server-on-notification
-       server session
-       (emcp-test-to-hash-table '((method . "notifications/roots/list_changed"))))
-      (let ((req (pop requests)))
-        (should (equal (alist-get 'method req) "roots/list"))
-        (emcp--server-on-result
-         server session
-         (emcp-test-to-hash-table `((jsonrpc . "2.0")
-                                    (id . ,(alist-get 'id req))
-                                    (result . ((roots . [((uri . "file:///new")
-                                                          (name . "new"))])))))))
-      (let ((roots (plist-get session :roots)))
-        (should (= (length roots) 1))
-        (should (equal (plist-get (car roots) :name) "new"))))))
 
 (provide 'emcp-core-tests)
 ;;; emcp-core-tests.el ends here

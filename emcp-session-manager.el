@@ -149,17 +149,9 @@ one of `accept', `reject' or `ask'."
        (name name)
        (t nil)))))
 
-(defun emcp-session-manager--root-label (root)
-  "Return a short label for ROOT, a plist as produced by `emcp--normalize-root'."
-  (or (plist-get root :name)
-      (when-let* ((path (plist-get root :path)))
-        (abbreviate-file-name path))
-      (plist-get root :uri)))
-
 (defun emcp-session-manager--session-sort-key (session)
   "Return a sort key for SESSION."
-  (list (or (plist-get (car (plist-get session :roots)) :path)
-            (emcp--session-label session))
+  (list (emcp--session-label session)
         (- (float-time (plist-get session :created)))))
 
 ;;; Section insertion
@@ -188,10 +180,6 @@ one of `accept', `reject' or `ask'."
                         (format-time-string "%Y-%m-%d %H:%M:%S" last-message))))
       (when-let* ((client (emcp-session-manager--client-info session)))
         (insert (format "    Client:         %s\n" client)))
-      (when-let* ((roots (plist-get session :roots)))
-        (insert "    Roots:\n")
-        (dolist (root roots)
-          (insert (format "      %s\n" (emcp-session-manager--root-label root)))))
       (insert "    "
               (emcp-session-manager--mode-line
                "Eval" eval-mode #'emcp-session-manager-cycle-eval-mode)

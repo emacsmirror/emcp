@@ -70,31 +70,17 @@ The transport listens on a random port."
 Drives SERVER directly without any transport."
   server session next-request-id)
 
-(cl-defun emcp-test-client-init-session
-    (server &key on-request on-notification capabilities)
+(cl-defun emcp-test-client-init-session (server &key on-notification)
   "Initialize a new client session for SERVER.
 
-Calls (ON-REQUEST REQUEST) when the server sends a request
-and (ON-NOTIFICATION NOTIFICATION) when the server sends a notification.
-
-CAPABILITIES is an alist used as the client `capabilities' object in the
-initialize request."
+Calls (ON-NOTIFICATION NOTIFICATION) when the server sends a notification."
   (pcase-let ((`(,session ,_response)
                (emcp--server-on-initialize
                 server
                 (emcp-test-to-hash-table
-                 `((id . 1) (params . ((protocolVersion . "2025-11-25")
-                                       ,@(when capabilities
-                                           `((capabilities . ,capabilities))))))))))
-    (when (or on-request on-notification)
-      (emcp--server-on-client-channel
-       server session
-       (lambda (request)
-         (cond
-          ((and on-request (alist-get 'id request))
-           (funcall on-request request))
-          ((and on-notification (not (alist-get 'id request)))
-           (funcall on-notification request))))))
+                 '((id . 1) (params . ((protocolVersion . "2025-11-25"))))))))
+    (when on-notification
+      (emcp--server-on-client-channel server session on-notification))
     (emcp--server-on-notification
      server session
      (emcp-test-to-hash-table '((method . "notifications/initialized"))))
