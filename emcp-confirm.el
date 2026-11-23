@@ -74,10 +74,9 @@ delay has elapsed.  Set to nil or 0 to disable."
 (defvar-local emcp-confirm--pending nil
   "Plist of the buffer's pending request.
 
-Keys: :server SERVER :session SESSION :context CONTEXT :callback CB
-:on-dismiss SYM.  Set to nil by `emcp-confirm--dispatch' before invoking
-the callback, so the buffer-local `kill-buffer-hook' is a no-op on the
-decision path.")
+Keys: :data DATA :callback CB :on-dismiss SYM.  Set to nil by
+`emcp-confirm--dispatch' before invoking the callback, so the
+buffer-local `kill-buffer-hook' is a no-op on the decision path.")
 
 (defvar-local emcp-confirm--ready-time nil
   "Time after which the confirm buffer accepts input.")
@@ -165,16 +164,24 @@ collapses cleanly when the caller has nothing to display."
         (insert "\n"))
       (buffer-string))))
 
-(defun emcp-confirm--render (session title body groups)
+(defconst emcp-confirm--label-max-width 60
+  "Maximum width of the agent label in confirmation headers and notifications.")
+
+(defun emcp-confirm--label (context)
+  "Return the label of CONTEXT, truncated for the confirmation header."
+  (truncate-string-to-width (emcp--context-label context)
+                            emcp-confirm--label-max-width nil nil "…"))
+
+(defun emcp-confirm--render (context title body groups)
   "Render the confirmation buffer body.
 
-SESSION is the MCP session plist.  TITLE is the verb that completes the
-header line.  BODY is a caller-supplied string describing what the agent
-wants to TITLE.  GROUPS is a list of action groups that the user can
-take."
+CONTEXT is the `emcp-context' of the tool call.  TITLE is the verb that
+completes the header line.  BODY is a caller-supplied string describing
+what the agent wants to TITLE.  GROUPS is a list of action groups that
+the user can take."
   (concat
    (format "%s wants to %s:\n\n"
-           (propertize (emcp--session-label session) 'face 'emcp-confirm-agent)
+           (propertize (emcp-confirm--label context) 'face 'emcp-confirm-agent)
            (propertize title 'face 'emcp-confirm-title))
    (emcp-confirm--format-body body)
    (emcp-confirm--render-groups groups)))
@@ -330,10 +337,10 @@ this list."
   "Return non-nil if any Emacs frame currently has focus."
   (seq-some #'frame-focus-state (frame-list)))
 
-(defun emcp-confirm--maybe-notify (server session title buffer)
+(defun emcp-confirm--maybe-notify (context title buffer)
   "Notify the user if Emacs is unfocused and a notifier is configured.
 
-SERVER, SESSION and TITLE are the values passed to `emcp-confirm-prompt'.
+CONTEXT and TITLE are the values passed to `emcp-confirm-prompt'.
 BUFFER is the confirm buffer; backends may use it to wire up click
 actions that focus the frame displaying it."
   (when (and emcp-confirm-notify-function
@@ -342,28 +349,28 @@ actions that focus the frame displaying it."
         (funcall emcp-confirm-notify-function
                  "EMCP confirmation"
                  (format "%s wants to %s"
-                         (emcp--session-label session)
+                         (emcp-confirm--label context)
                          title)
                  buffer)
       (error
-       (emcp--log server session
+       (emcp--log (emcp-context-server context) context
          (warning (format "Notification failed: %s"
                           (error-message-string err))))))))
 
-(cl-defun emcp-confirm-prompt (server session &key title body context groups
-                                      on-dismiss callback)
+(cl-defun emcp-confirm-prompt (context &key title body data groups on-dismiss callback)
   "Open the confirmation buffer to ask the user about a tool call.
 
-SERVER is the MCP server struct and SESSION is the MCP session plist.
+CONTEXT is the `emcp-context' of the tool call.
 
-TITLE is the verb that completes \"The agent in session ID wants to TITLE:\".
+TITLE is the verb that completes \"CLIENT (SERVER) wants to TITLE:\".
 
 BODY is a string inserted between the header and the action menu.  It
 is indented by two spaces and a trailing newline is added if missing,
 so callers only need to handle font-locking when they want it.
 
-CONTEXT is a plist stored buffer-locally so :command handlers can read
-arbitrary per-prompt data (e.g. the original code for a copy command).
+DATA is stored buffer-locally under :data in `emcp-confirm--pending', so
+:command handlers can read arbitrary per-prompt data (e.g. the original
+code for a copy command).
 
 GROUPS is an ordered list of action groups.  Each group is a plist with:
   :title   Optional string heading.
@@ -386,17 +393,16 @@ Returns the buffer."
       ;; in its body, which would clear the buffer-local pending plist.
       (emcp-confirm-mode)
       (let ((inhibit-read-only t))
-        (insert (emcp-confirm--render session title body groups)))
+        (insert (emcp-confirm--render context title body groups)))
       (goto-char (point-min))
       (use-local-map (emcp-confirm--build-keymap groups))
       (setq emcp-confirm--pending
-            (list :server server :session session :context context
-                  :on-dismiss on-dismiss :callback callback))
+            (list :data data :on-dismiss on-dismiss :callback callback))
       (add-hook 'kill-buffer-hook #'emcp-confirm--on-kill nil t))
     (pop-to-buffer buf '((display-buffer-in-side-window)
                          (side . bottom)
                          (window-height . 0.4)))
-    (emcp-confirm--maybe-notify server session title buf)
+    (emcp-confirm--maybe-notify context title buf)
     ;; Force the buffer onto the screen before starting the
     ;; input-delay countdown, so that the delay counts against the
     ;; actual time the buffer is visible.

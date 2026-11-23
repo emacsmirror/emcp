@@ -98,7 +98,7 @@ Return t (accept), nil (reject), or `ask' (ask user)."
 (defun emcp-tools-eval--copy-code-to-kill-ring ()
   "Copy the code under review to the `kill-ring' without closing the buffer."
   (interactive)
-  (kill-new (plist-get (plist-get emcp-confirm--pending :context) :code))
+  (kill-new (plist-get (plist-get emcp-confirm--pending :data) :code))
   (message "EMCP: code copied to kill-ring"))
 
 (defun emcp-tools-eval--apply-action (action server)
@@ -128,18 +128,18 @@ font-lock of its own) renders directly."
     (font-lock-ensure)
     (buffer-string)))
 
-(defun emcp-tools-eval--prompt (server session form callback)
-  "Open the confirmation buffer for SERVER, SESSION and FORM.
+(defun emcp-tools-eval--prompt (context form callback)
+  "Open the confirmation buffer for FORM in the tool call CONTEXT.
 
 CALLBACK is invoked with a t or nil decision after the user picks an
 action."
   (let* ((pretty (string-trim (pp-to-string form)))
          (code (emcp-tools-eval--fontify-elisp pretty)))
     (emcp-confirm-prompt
-     server session
+     context
      :title "evaluate"
      :body code
-     :context (list :code code)
+     :data (list :code code)
      :on-dismiss 'no-once
      :groups
      `(( :title "Accept?"
@@ -152,7 +152,8 @@ action."
                        :command emcp-tools-eval--copy-code-to-kill-ring))))
      :callback (lambda (action)
                  (funcall callback
-                          (emcp-tools-eval--apply-action action server))))))
+                          (emcp-tools-eval--apply-action
+                           action (emcp-context-server context)))))))
 
 ;;; Decision logging
 
@@ -235,7 +236,7 @@ and decision fatigue."
              ;; pick by the user would otherwise relabel this call's source to `mode'.
              (source (emcp-tools-eval--decision-source server)))
         (cl-flet ((maybe-eval (accept)
-                    (emcp--log server session
+                    (emcp--log server context
                       (info (emcp-tools-eval--format-log accept source form)))
                     (if accept
                         (emcp-tools-eval--eval-form form #'send-result)
@@ -244,10 +245,10 @@ and decision fatigue."
                                       (text . "User rejected evaluation."))])
                          (isError . t))))))
           (if (eq decision 'ask)
-              (emcp-tools-eval--prompt server session form #'maybe-eval)
+              (emcp-tools-eval--prompt context form #'maybe-eval)
             (maybe-eval decision))))
     (emcp-tools-eval-parse-error
-     (emcp--log server session
+     (emcp--log server context
        (info (format "eval REJECT parse-error %s" (cadr err))))
      (send-result
       `((content . [((type . "text")

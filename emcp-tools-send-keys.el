@@ -77,8 +77,8 @@ May record a server mode in SERVER."
      (setf (emcp--server-mode server :emcp-tools-send-keys-mode) 'reject)
      nil)))
 
-(defun emcp-tools-send-keys--prompt (server session keys callback)
-  "Open the confirmation buffer for SERVER, SESSION and KEYS.
+(defun emcp-tools-send-keys--prompt (context keys callback)
+  "Open the confirmation buffer for KEYS in the tool call CONTEXT.
 
 CALLBACK is invoked with a t or nil decision after the user picks an
 action.
@@ -86,7 +86,7 @@ action.
 Customize placement of the confirmation buffer by adding an entry for
 `emcp-confirm-buffer-name' to `display-buffer-alist'."
   (emcp-confirm-prompt
-   server session
+   context
    :title "send the keys"
    :body keys
    :on-dismiss 'no-once
@@ -99,7 +99,8 @@ Customize placement of the confirmation buffer by adding an entry for
                  (?r "Always reject" :result mode-reject))))
    :callback (lambda (action)
                (funcall callback
-                        (emcp-tools-send-keys--apply-action action server)))))
+                        (emcp-tools-send-keys--apply-action
+                         action (emcp-context-server context))))))
 
 ;;; Decision logging
 
@@ -186,7 +187,7 @@ and decision fatigue."
         ;; selected window
         (target-window (selected-window)))
     (cl-flet ((maybe-execute (accept)
-                (emcp--log server session
+                (emcp--log server context
                   (info (emcp-tools-send-keys--format-log accept source keys)))
                 (if accept
                     (emcp-tools-send-keys--execute keys target-window #'send-result)
@@ -195,7 +196,7 @@ and decision fatigue."
                                   (text . "User rejected send-keys."))])
                      (isError . t))))))
       (if (eq decision 'ask)
-          (emcp-tools-send-keys--prompt server session keys #'maybe-execute)
+          (emcp-tools-send-keys--prompt context keys #'maybe-execute)
         (maybe-execute decision)))))
 
 (provide 'emcp-tools-send-keys)

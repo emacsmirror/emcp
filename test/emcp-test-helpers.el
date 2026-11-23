@@ -70,15 +70,19 @@ The transport listens on a random port."
 Drives SERVER directly without any transport."
   server session next-request-id)
 
-(cl-defun emcp-test-client-init-session (server &key on-notification)
+(cl-defun emcp-test-client-init-session (server &key on-notification client-info)
   "Initialize a new client session for SERVER.
 
-Calls (ON-NOTIFICATION NOTIFICATION) when the server sends a notification."
+Calls (ON-NOTIFICATION NOTIFICATION) when the server sends a notification.
+CLIENT-INFO is an optional clientInfo alist sent with the initialize
+request."
   (pcase-let ((`(,session ,_response)
                (emcp--server-on-initialize
                 server
                 (emcp-test-to-hash-table
-                 '((id . 1) (params . ((protocolVersion . "2025-11-25"))))))))
+                 `((id . 1)
+                   (params . ((protocolVersion . "2025-11-25")
+                              ,@(when client-info `((clientInfo . ,client-info))))))))))
     (when on-notification
       (emcp--server-on-client-channel server session on-notification))
     (emcp--server-on-notification

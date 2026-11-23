@@ -107,7 +107,7 @@ attacks."
                 (warning (format "Invalid session ID %s" session-id)))
               (funcall send-response '(:status Not-Found)))
             (invalid-request (session request)
-              (emcp--log server session
+              (emcp--log server (emcp--context-from-session server session)
                 (warning "Invalid JSON-RPC request")
                 (debug (emcp--prefix-lines "> " (emcp--log-pp (emcp--to-alist request)))))
               (funcall send-response '(:status Bad-Request)))
@@ -197,7 +197,7 @@ attacks."
                       ;; EMCP sends no requests, so we do not expect
                       ;; to receive any responses
                       (emcp--session-touch session)
-                      (emcp--log server session
+                      (emcp--log server (emcp--context-from-session server session)
                         (warning (format "Rejecting unsolicited JSON-RPC response (%s)"
                                          (gethash "id" object)))
                         (debug (emcp--prefix-lines "> " (emcp--log-pp (emcp--to-alist object)))))
@@ -228,7 +228,7 @@ attacks."
               ((not (protocol-versions-match-p session headers))
                (protocol-version-mismatch session headers))
               (t
-               (emcp--log server session
+               (emcp--log server (emcp--context-from-session server session)
                  (info "Terminating session"))
                (emcp--server-delete-session server session)
                (funcall send-response '(:status No-Content))))))

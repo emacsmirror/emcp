@@ -284,6 +284,72 @@
           (should (equal (alist-get 'message (alist-get 'error response))
                          "No greeting for you")))))))
 
+;;; Request context
+
+(defun emcp-tests--describe-context (context)
+  "Summarize CONTEXT as a string."
+  (format "%s %s %s %s"
+          (gethash "name" (emcp-context-client-info context))
+          (emcp-context-protocol-version context)
+          (emcp-context-request-id context)
+          (emcp--server-name (emcp-context-server context))))
+
+(ert-deftest emcp-tests-bodies-see-context ()
+  ;; Tool, prompt and resource bodies all see the request context.
+  (let ((tool (make-symbol "context-tool"))
+        (prompt (make-symbol "context-prompt"))
+        (resource (make-symbol "context-resource")))
+    (eval
+     `(progn
+        (emcp-deftool ,tool ()
+          "A tool describing its context."
+          `((content . [((type . "text") (text . ,(emcp-tests--describe-context context)))])))
+        (emcp-defprompt ,prompt ()
+          "A prompt describing its context."
+          `((messages . [((role . "user")
+                          (content . ((type . "text")
+                                      (text . ,(emcp-tests--describe-context context)))))])))
+        (emcp-defresource ,resource "emcp://test/context"
+          "A resource describing its context."
+          `((contents . [((uri . ,uri) (text . ,(emcp-tests--describe-context context)))]))))
+     t)
+    (emcp-test-with-server server (emcp--server-build :name "emcp-test"
+                                                      :tools (list tool)
+                                                      :prompts (list prompt)
+                                                      :resources (list resource))
+      (let ((client (emcp-test-client-init-session
+                     server :client-info '((name . "test-client") (version . "1.0")))))
+        (emcp-test-client-with-response client response
+                                        `((id . 42)
+                                          (method . "tools/call")
+                                          (params . ((name . ,(symbol-name tool)))))
+          (should (equal (alist-get 'text (aref (alist-get 'content (alist-get 'result response)) 0))
+                         "test-client 2025-11-25 42 emcp-test")))
+        (emcp-test-client-with-response client response
+                                        `((id . 43)
+                                          (method . "prompts/get")
+                                          (params . ((name . ,(symbol-name prompt)))))
+          (let ((message (aref (alist-get 'messages (alist-get 'result response)) 0)))
+            (should (equal (alist-get 'text (alist-get 'content message))
+                           "test-client 2025-11-25 43 emcp-test"))))
+        (emcp-test-client-with-response client response
+                                        '((id . 44)
+                                          (method . "resources/read")
+                                          (params . ((uri . "emcp://test/context"))))
+          (should (equal (alist-get 'text (aref (alist-get 'contents (alist-get 'result response)) 0))
+                         "test-client 2025-11-25 44 emcp-test")))))))
+
+(ert-deftest emcp-tests-log-prefix-client-label ()
+  ;; Log lines start with the client name, truncated or padded to a fixed width.
+  (emcp-test-with-server server (emcp--server-build)
+    (dolist (name '("a-very-long-client-name" "short"))
+      (let ((client (emcp-test-client-init-session server :client-info `((name . ,name)))))
+        (emcp-test-request client "tools/list")))
+    (with-current-buffer (emcp--server-log-buffer server)
+      (let ((log (buffer-string)))
+        (should (string-match-p "^[^ ]+ [^ ]+ INFO  a-very-lon > Request tools/list" log))
+        (should (string-match-p "^[^ ]+ [^ ]+ INFO  short      > Request tools/list" log))))))
+
 ;;; Server notifications
 
 (ert-deftest emcp-tests-send-server-notification ()

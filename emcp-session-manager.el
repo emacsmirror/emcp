@@ -149,17 +149,21 @@ one of `accept', `reject' or `ask'."
        (name name)
        (t nil)))))
 
-(defun emcp-session-manager--session-sort-key (session)
-  "Return a sort key for SESSION."
-  (list (emcp--session-label session)
+(defun emcp-session-manager--session-label (server session)
+  "Return a label for SESSION on SERVER."
+  (emcp--context-label (emcp--context-from-session server session)))
+
+(defun emcp-session-manager--session-sort-key (server session)
+  "Return a sort key for SESSION on SERVER."
+  (list (emcp-session-manager--session-label server session)
         (- (float-time (plist-get session :created)))))
 
 ;;; Section insertion
 
-(defun emcp-session-manager--insert-session (profile session)
-  "Insert a section for SESSION belonging to PROFILE's server."
+(defun emcp-session-manager--insert-session (profile server session)
+  "Insert a section for SESSION belonging to PROFILE's SERVER."
   (let ((id (plist-get session :id))
-        (label (emcp--session-label session)))
+        (label (emcp-session-manager--session-label server session)))
     (magit-insert-section (emcp-session (cons profile id))
       (magit-insert-heading
         (emcp-session-manager--propertize label 'emcp-session-manager-session)
@@ -209,7 +213,8 @@ one of `accept', `reject' or `ask'."
          (server (cdr entry))
          (url (ignore-errors (emcp-server-url server)))
          (sessions (sort (hash-table-values (emcp--server-sessions server))
-                         :key #'emcp-session-manager--session-sort-key)))
+                         :key (apply-partially
+                               #'emcp-session-manager--session-sort-key server))))
     (magit-insert-section (emcp-server profile)
       (magit-insert-heading
         (emcp-session-manager--propertize (format "[%s]" profile)
@@ -223,7 +228,7 @@ one of `accept', `reject' or `ask'."
        (t
         (insert "\n")
         (dolist (session sessions)
-          (emcp-session-manager--insert-session profile session))))
+          (emcp-session-manager--insert-session profile server session))))
       (insert "\n"))))
 
 (defun emcp-session-manager--render ()
@@ -357,8 +362,9 @@ LABEL is a string describing the mode for the user-facing message."
   "Kill the session at point after confirmation."
   (interactive)
   (pcase-let* ((`(,_profile ,server ,session) (emcp-session-manager--session-at-point))
-               (name (emcp-session-manager--propertize (emcp--session-label session)
-                                                        'emcp-session-manager-session)))
+               (name (emcp-session-manager--propertize
+                      (emcp-session-manager--session-label server session)
+                      'emcp-session-manager-session)))
     (when (yes-or-no-p (format "Kill session %s? " name))
       (when-let* ((channel (plist-get session :client-channel)))
         (funcall channel nil))

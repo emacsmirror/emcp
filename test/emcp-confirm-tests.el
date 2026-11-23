@@ -28,66 +28,92 @@
 (require 'emcp-test-helpers)
 (require 'ert)
 
+(defmacro emcp-tests-with-confirm-context (context &rest body)
+  "Bind CONTEXT to a tool call context of a test server and execute BODY.
+
+The client is called \"Test Client\" and the server \"emcp-test\".
+`pop-to-buffer' is stubbed out and desktop notifications are disabled."
+  (declare (indent 1) (debug (symbolp body)))
+  (let ((server (gensym "server")))
+    `(emcp-test-with-server ,server (emcp--server-build :name "emcp-test")
+       (let ((,context (emcp--make-context
+                        :server ,server
+                        :client-info (emcp-test-to-hash-table
+                                      '((name . "test-client") (title . "Test Client")))))
+             (emcp-confirm-notify-function nil))
+         (cl-letf (((symbol-function 'pop-to-buffer) #'ignore))
+           ,@body)))))
+
+(ert-deftest emcp-tests-confirm-header-shows-context-label ()
+  (emcp-tests-with-confirm-context context
+    (let ((buf (emcp-confirm-prompt
+                context
+                :title "do thing"
+                :body "thing"
+                :groups '((:actions ((?y "Yes" :result yes-once))))
+                :callback #'ignore)))
+      (with-current-buffer buf
+        (should (string-prefix-p "Test Client (emcp-test) wants to do thing:"
+                                 (buffer-string))))
+      (kill-buffer buf))))
+
 (ert-deftest emcp-tests-confirm-result-action ()
   ;; Pressing a :result key invokes the callback once with that symbol and
   ;; kills the buffer.  Setting :on-dismiss also exercises the dispatch
   ;; path's `--pending'-clearing: if the kill-buffer-hook fired again, the
   ;; callback would be invoked twice.
-  (let* ((calls nil)
-         (cb (lambda (r) (push r calls)))
-         (emcp-confirm-notify-function nil))
-    (cl-letf (((symbol-function 'pop-to-buffer) #'ignore))
-      (let ((buf (emcp-confirm-prompt
-                  nil '(:id "test-session")
-                  :title "do thing"
-                  :body "thing"
-                  :on-dismiss 'no-once
-                  :groups '((:title "Accept?"
-                                    :actions ((?y "Yes" :result yes-once)
-                                              (?n "No"  :result no-once))))
-                  :callback cb)))
-        (with-current-buffer buf (emcp-confirm--dispatch 'yes-once))
-        (should (equal calls '(yes-once)))
-        (should-not (buffer-live-p buf))))))
+  (emcp-tests-with-confirm-context context
+    (let* ((calls nil)
+           (buf (emcp-confirm-prompt
+                 context
+                 :title "do thing"
+                 :body "thing"
+                 :on-dismiss 'no-once
+                 :groups '((:title "Accept?"
+                                   :actions ((?y "Yes" :result yes-once)
+                                             (?n "No"  :result no-once))))
+                 :callback (lambda (r) (push r calls)))))
+      (with-current-buffer buf (emcp-confirm--dispatch 'yes-once))
+      (should (equal calls '(yes-once)))
+      (should-not (buffer-live-p buf)))))
 
 (ert-deftest emcp-tests-confirm-command-action-does-not-dismiss ()
-  ;; A :command action runs the bound function without dismissing the buffer
-  ;; or invoking the callback.
-  (let* ((calls nil)
-         (cmd-runs 0)
-         (cmd (lambda () (interactive) (cl-incf cmd-runs)))
-         (cb (lambda (r) (push r calls)))
-         (emcp-confirm-notify-function nil))
-    (cl-letf (((symbol-function 'pop-to-buffer) #'ignore))
-      (let ((buf (emcp-confirm-prompt
-                  nil '(:id "test")
-                  :title "do thing"
-                  :body "thing"
-                  :groups `((:actions ((?w "Aux" :command ,cmd))))
-                  :callback cb)))
-        (with-current-buffer buf
-          (call-interactively (lookup-key (current-local-map) "w")))
-        (should (= cmd-runs 1))
-        (should (null calls))
-        (should (buffer-live-p buf))
-        (kill-buffer buf)))))
+  ;; A :command action runs the bound function with access to :data, without
+  ;; dismissing the buffer or invoking the callback.
+  (emcp-tests-with-confirm-context context
+    (let* ((calls nil)
+           (seen-data nil)
+           (cmd (lambda ()
+                  (interactive)
+                  (push (plist-get emcp-confirm--pending :data) seen-data)))
+           (buf (emcp-confirm-prompt
+                 context
+                 :title "do thing"
+                 :body "thing"
+                 :data '(:code "(+ 1 2)")
+                 :groups `((:actions ((?w "Aux" :command ,cmd))))
+                 :callback (lambda (r) (push r calls)))))
+      (with-current-buffer buf
+        (call-interactively (lookup-key (current-local-map) "w")))
+      (should (equal seen-data '((:code "(+ 1 2)"))))
+      (should (null calls))
+      (should (buffer-live-p buf))
+      (kill-buffer buf))))
 
 (ert-deftest emcp-tests-confirm-dismiss-invokes-callback ()
   ;; Killing the buffer without picking a :result action invokes the
   ;; callback with the :on-dismiss symbol.
-  (let* ((calls nil)
-         (cb (lambda (r) (push r calls)))
-         (emcp-confirm-notify-function nil))
-    (cl-letf (((symbol-function 'pop-to-buffer) #'ignore))
-      (let ((buf (emcp-confirm-prompt
-                  nil '(:id "test")
-                  :title "do thing"
-                  :body ""
-                  :on-dismiss 'no-once
-                  :groups '((:actions ((?y "Yes" :result yes-once))))
-                  :callback cb)))
-        (kill-buffer buf)
-        (should (equal calls '(no-once)))))))
+  (emcp-tests-with-confirm-context context
+    (let* ((calls nil)
+           (buf (emcp-confirm-prompt
+                 context
+                 :title "do thing"
+                 :body ""
+                 :on-dismiss 'no-once
+                 :groups '((:actions ((?y "Yes" :result yes-once))))
+                 :callback (lambda (r) (push r calls)))))
+      (kill-buffer buf)
+      (should (equal calls '(no-once))))))
 
 (provide 'emcp-confirm-tests)
 ;;; emcp-confirm-tests.el ends here
