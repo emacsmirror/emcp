@@ -615,7 +615,7 @@ Parameters:
 - =pattern= (string) :: Regular expression to search for
 - =kind= (string, optional) :: Restrict results to a kind of symbol ("any", "function", "command", "macro", "variable", "custom", "face", "feature" or "widget")
 
-*** =describe= [[./emcp-tools.el::309][~emcp-tools-describe~]]
+*** =describe= [[./emcp-tools.el::314][~emcp-tools-describe~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-describe
 :END:
@@ -626,7 +626,7 @@ Parameters:
 - =symbol= (string) :: Name of the symbol to describe.
 - =kind= (string, optional) :: Restrict to a kind of definition ("any", "function", "command", "macro", "variable", "custom", "face", "feature" or "widget").
 
-*** =eval= [[./emcp-tools-eval.el::202][~emcp-tools-eval~]]
+*** =eval= [[./emcp-tools-eval.el::210][~emcp-tools-eval~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-eval
 :END:
@@ -635,12 +635,12 @@ Evaluate Emacs Lisp.
 
 To enhance the safety of letting an agent execute arbitrary code, every
 tool call goes through a confirmation buffer.  The user can also enable
-a session-wide accept or reject mode for trusted or untrusted sessions.
+an accept or reject mode for the whole server.
 
 Parameters:
 - =code= (string) :: Multiple top-level forms are wrapped in an implicit `progn'.
 
-*** =find-definition= [[./emcp-tools.el::148][~emcp-tools-find-definition~]]
+*** =find-definition= [[./emcp-tools.el::153][~emcp-tools-find-definition~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-find-definition
 :END:
@@ -651,7 +651,7 @@ Parameters:
 - =symbol= (string) :: Name of the symbol to look up.
 - =kind= (string, optional) :: Restrict to a kind of definition ("any", "function", "command", "macro", "variable", "custom", "face", "feature" or "widget").
 
-*** =find-references= [[./emcp-tools.el::263][~emcp-tools-find-references~]]
+*** =find-references= [[./emcp-tools.el::268][~emcp-tools-find-references~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-find-references
 :END:
@@ -662,7 +662,7 @@ Parameters:
 - =symbol= (string) :: Name of the symbol to look up.
 - =kind= (string, optional) :: Restrict to a kind of reference ("any", "function", "command", "macro", "variable", "custom", "face", "feature" or "widget").
 
-*** =get-variable= [[./emcp-tools.el::397][~emcp-tools-get-variable~]]
+*** =get-variable= [[./emcp-tools.el::402][~emcp-tools-get-variable~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-get-variable
 :END:
@@ -676,7 +676,7 @@ variables.
 Parameters:
 - =name= (string) :: Symbol
 
-*** =info-search= [[./emcp-tools.el::366][~emcp-tools-info-search~]]
+*** =info-search= [[./emcp-tools.el::371][~emcp-tools-info-search~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-info-search
 :END:
@@ -694,7 +694,7 @@ Parameters:
 
 View screenshots of all visible Emacs frames.
 
-*** =send-keys= [[./emcp-tools-send-keys.el::148][~emcp-tools-send-keys~]]
+*** =send-keys= [[./emcp-tools-send-keys.el::163][~emcp-tools-send-keys~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-send-keys
 :END:
@@ -710,7 +710,7 @@ one.
 Parameters:
 - =keys= (string) :: Key sequence in `kbd' notation, e.g. =C-x C-f=, =M-x list-buffers RET=, or =h e l l o= for literal characters.
 
-*** =set-variable= [[./emcp-tools.el::413][~emcp-tools-set-variable~]]
+*** =set-variable= [[./emcp-tools.el::418][~emcp-tools-set-variable~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-set-variable
 :END:
@@ -817,7 +817,22 @@ EMCP exposes the following customs. Inspect or change them with =M-x customize-g
 
 Default: ~"*EMCP confirm*"~
 
-** [[./emcp-confirm.el::224][~emcp-confirm-notify-darwin-bundle-id~]]
+** [[./emcp-confirm.el::62][~emcp-confirm-input-delay~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-confirm-input-delay
+:END:
+
+: Seconds to ignore input after a confirmation buffer opens.
+:
+: Prevents accidentally choosing an action when the buffer pops up while
+: you are typing in another buffer (e.g. hitting y or n mid-word).
+: Keystrokes that arrive during this grace period are dropped with a
+: message in the echo area; the buffer accepts input normally once the
+: delay has elapsed.  Set to nil or 0 to disable.
+
+Default: ~0.2~
+
+** [[./emcp-confirm.el::251][~emcp-confirm-notify-darwin-bundle-id~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-confirm-notify-darwin-bundle-id
 :END:
@@ -831,7 +846,7 @@ Default: ~"*EMCP confirm*"~
 
 Default: ~"org.gnu.Emacs"~
 
-** [[./emcp-confirm.el::282][~emcp-confirm-notify-function~]]
+** [[./emcp-confirm.el::309][~emcp-confirm-notify-function~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-confirm-notify-function
 :END:
@@ -854,7 +869,7 @@ Default: ~"org.gnu.Emacs"~
 
 Default: ~emcp-confirm-notify-default~
 
-** [[./emcp.el::96][~emcp-default-profile~]]
+** [[./emcp.el::97][~emcp-default-profile~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-default-profile
 :END:
@@ -863,7 +878,7 @@ Default: ~emcp-confirm-notify-default~
 
 Default: ~nil~
 
-** [[./emcp-http.el::30][~emcp-http-host~]]
+** [[./emcp-http.el::31][~emcp-http-host~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-http-host
 :END:
@@ -872,7 +887,7 @@ Default: ~nil~
 
 Default: ~"127.0.0.1"~
 
-** [[./emcp-http.el::42][~emcp-http-path~]]
+** [[./emcp-http.el::43][~emcp-http-path~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-http-path
 :END:
@@ -881,7 +896,7 @@ Default: ~"127.0.0.1"~
 
 Default: ~"/mcp"~
 
-** [[./emcp-http.el::35][~emcp-http-port~]]
+** [[./emcp-http.el::36][~emcp-http-port~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-http-port
 :END:
@@ -892,7 +907,7 @@ Default: ~"/mcp"~
 
 Default: ~t~
 
-** [[./emcp-core.el::41][~emcp-instructions~]]
+** [[./emcp-core.el::39][~emcp-instructions~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-instructions
 :END:
@@ -901,9 +916,9 @@ Default: ~t~
 :
 : Should describe the overall purpose of the server.
 
-Default: ~"Interact with a running Emacs instance.\n\nUse this when you are\n- answering questions about Emacs,\n- debugging Emacs,\n- programming or planning Emacs Lisp,\n- or controlling an Emacs instance.\n\nPrefer this server over file operations or shell commands when working in an Emacs context."~
+Default: ~"Inspect and control the user's running Emacs.\n\nUse this when you are\n- answering questions about Emacs,\n- debugging Emacs,\n- programming or planning Emacs Lisp,\n- looking up Emacs Lisp files,\n- or controlling an Emacs instance.\n\nPrefer this server over file operations or shell commands when working in an Emacs context."~
 
-** [[./emcp-core.el::69][~emcp-log-level~]]
+** [[./emcp-core.el::68][~emcp-log-level~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-log-level
 :END:
@@ -912,7 +927,7 @@ Default: ~"Interact with a running Emacs instance.\n\nUse this when you are\n- a
 
 Default: ~info~
 
-** [[./emcp.el::49][~emcp-profiles~]]
+** [[./emcp.el::50][~emcp-profiles~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-profiles
 :END:
@@ -943,12 +958,21 @@ Default:
 	       (emcp-tools-eval emcp-tools-send-keys)))
 #+end_src
 
+** [[./emcp-session-manager.el::65][~emcp-session-manager-buffer-name~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-session-manager-buffer-name
+:END:
+
+: Name of the session manager buffer.
+
+Default: ~"*EMCP sessions*"~
+
 ** [[./emcp-tools-eval.el::42][~emcp-tools-eval-default-policy~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-tools-eval-default-policy
 :END:
 
-: Default action when no session mode applies.
+: Default action when no server mode applies.
 :
 : t    always accept without prompting,
 : nil  always reject without prompting,
@@ -956,7 +980,7 @@ Default:
 
 Default: ~ask~
 
-** [[./emcp-tools.el::253][~emcp-tools-find-references-max-lines~]]
+** [[./emcp-tools.el::258][~emcp-tools-find-references-max-lines~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-tools-find-references-max-lines
 :END:
@@ -974,7 +998,7 @@ Default: ~3~
 :CUSTOM_ID: custom-emcp-tools-send-keys-default-policy
 :END:
 
-: Default action when no session mode applies.
+: Default action when no server mode applies.
 :
 : t    always accept without prompting,
 : nil  always reject without prompting,
