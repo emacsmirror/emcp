@@ -190,9 +190,9 @@ request."
          (kill-buffer ,buffer)))))
 
 (defun emcp-test-http--default-headers (_body)
-  "Return the default request headers for a POST of the JSON-RPC message BODY.
+  "Return the default request headers for the JSON-RPC message BODY.
 
-BODY is the message as passed to `emcp-test-http-post'.  Protocol headers
+BODY is the message as passed to `emcp-test-http-request'.  Protocol headers
 derived from BODY belong here, so that all tests send them by default."
   `(("Content-Type" . "application/json")
     ("Accept" . "application/json, text/event-stream")
@@ -229,24 +229,28 @@ chunk returns the empty string."
         (prog1 (buffer-substring start (- end 2))
           (delete-region (point-min) end))))))
 
-(cl-defun emcp-test-http-post (conn body &key headers omit-headers path (timeout 1))
-  "POST BODY on CONN and return the response as (:status :headers :body).
+(cl-defun emcp-test-http-request (conn method body &key headers omit-headers path (timeout 1))
+  "Send a METHOD request with BODY on CONN and return the response.
 
-BODY is a JSON-RPC message as an alist or a string that is sent as is.
-HEADERS is an alist of header names and values that are added to or
-replace the default headers.  OMIT-HEADERS is a list of header names to
-leave out.  PATH defaults to the MCP path of the server.  Header names
-are strings and compared case-insensitively.  Wait at most TIMEOUT
+METHOD is an HTTP method symbol such as `GET'.  BODY is a JSON-RPC
+message as an alist, a string that is sent as is, or nil for an empty
+body.  HEADERS is an alist of header names and values that are added to
+or replace the default headers.  OMIT-HEADERS is a list of header names
+to leave out.  PATH defaults to the MCP path of the server.  Header
+names are strings and compared case-insensitively.  Wait at most TIMEOUT
 seconds for the response.
 
-Response headers are an alist of strings.  For an event stream, return
-right after the response head with :body nil and leave the events for
+The response is a plist (:status :headers :body).  Response headers are
+an alist of strings.  For an event stream, return right after the
+response head with :body nil and leave the events for
 `emcp-test-http-read-event'.  Otherwise, :body is the decoded response
 body."
   (let* ((server (process-get conn :emcp-test-server))
          (transport (emcp--server-transport server))
          (payload (encode-coding-string
-                   (if (stringp body) body (json-serialize body))
+                   (cond ((null body) "")
+                         ((stringp body) body)
+                         (t (json-serialize body)))
                    'utf-8))
          (all-headers (emcp-test-http--default-headers body)))
     (pcase-dolist (`(,name . ,value) headers)
@@ -256,7 +260,7 @@ body."
                                     all-headers))
     (process-send-string
      conn
-     (concat (format "POST %s HTTP/1.1\r\n" (or path (process-get transport :emcp-path)))
+     (concat (format "%s %s HTTP/1.1\r\n" method (or path (process-get transport :emcp-path)))
              (format "Host: 127.0.0.1:%s\r\n" (process-contact transport :service))
              (mapconcat (pcase-lambda (`(,name . ,value)) (format "%s: %s\r\n" name value))
                         all-headers "")
@@ -311,7 +315,7 @@ Return :comment if EVENT has no data lines, otherwise its parsed JSON data."
 (cl-defun emcp-test-http-read-event (conn &key (timeout 1))
   "Read the next SSE event from the response on CONN.
 
-Must follow an `emcp-test-http-post' that returned an event stream.
+Must follow an `emcp-test-http-request' that returned an event stream.
 Return :comment for an event that consists only of comment lines, the
 parsed JSON data of a data event, or nil if the stream has ended.  Wait
 at most TIMEOUT seconds for the event."

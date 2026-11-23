@@ -24,6 +24,7 @@
 ;;; Code:
 
 (require 'http-server)
+(require 'url-parse)
 
 (require 'emcp-core)
 
@@ -65,6 +66,18 @@ LOG-LEVEL is the HTTP log level."
   (when-let* ((transport (emcp--server-transport server)))
     (http-server-stop transport)))
 
+(defun emcp-http--origin-allowed-p (origin)
+  "Return non-nil if a request with Origin header ORIGIN may access the server.
+
+Only requests without an Origin header or with a local http(s) origin
+are allowed, as the MCP specification requires to prevent DNS rebinding
+attacks."
+  (or (not origin)
+      (let ((url (url-generic-parse-url origin)))
+        (and (member (url-type url) '("http" "https"))
+             ;; The parser keeps the brackets of IPv6 hosts and downcases hosts
+             (member (url-host url) '("localhost" "127.0.0.1" "[::1]"))))))
+
 (defun emcp--http-on-request (server request send-response)
   "Process an HTTP REQUEST to SERVER."
   (emcp--log server nil (trace (emcp--prefix-lines "> " (emcp--log-pp request))))
@@ -72,6 +85,15 @@ LOG-LEVEL is the HTTP log level."
               (emcp--log server nil
                 (warning (format "Invalid request path %s" (emcp--log-escape path))))
               (funcall send-response '(:status Not-Found)))
+            (forbidden-origin (origin)
+              (emcp--log server nil
+                (warning (format "Forbidden origin %s" (emcp--log-escape origin))))
+              (funcall send-response
+                       `( :status Forbidden
+                          :headers ((Content-Type . "application/json"))
+                          :body ,(json-serialize
+                                  (emcp--jsonrpc-error nil emcp--jsonrpc-invalid-request
+                                                       "Forbidden origin")))))
             (unexpected-method (method)
               (emcp--log server nil
                 (debug (format "Unexpected request method %s" method)))
@@ -99,12 +121,17 @@ LOG-LEVEL is the HTTP log level."
                   (warning (format "Request protocol version %s, but %s was negotiated"
                                    header-version session-version))))
               (funcall send-response '(:status Bad-Request))))
-    (let ((path (plist-get request :path))
-          (method (plist-get request :method))
-          (headers (plist-get request :headers))
-          (body (plist-get request :body)))
-      (if (not (equal path (process-get (emcp--server-transport server) :emcp-path)))
-          (invalid-path path)
+    (let* ((path (plist-get request :path))
+           (method (plist-get request :method))
+           (headers (plist-get request :headers))
+           (origin (alist-get 'Origin headers))
+           (body (plist-get request :body)))
+      (cond
+       ((not (equal path (process-get (emcp--server-transport server) :emcp-path)))
+        (invalid-path path))
+       ((not (emcp-http--origin-allowed-p origin))
+        (forbidden-origin origin))
+       (t
         (pcase method
           ('GET
            (let* ((session-id (alist-get 'MCP-Session-Id headers))
@@ -205,7 +232,7 @@ LOG-LEVEL is the HTTP log level."
                  (info "Terminating session"))
                (emcp--server-delete-session server session)
                (funcall send-response '(:status No-Content))))))
-          (_ (unexpected-method method)))))))
+          (_ (unexpected-method method))))))))
 
 (provide 'emcp-http)
 ;;; emcp-http.el ends here
