@@ -237,7 +237,19 @@ arbitrary data related to the error."
   (resource-templates (make-hash-table :test 'equal) :type 'hash-table
                       :documentation "Available resource templates.")
   (tools (make-hash-table :test 'equal) :type 'hash-table
-         :documentation "Available tools."))
+         :documentation "Available tools.")
+  (modes nil :type 'list
+         :documentation "Plist of tool modes, e.g. :emcp-tools-eval-mode."))
+
+(defun emcp--server-mode (server key)
+  "Return the tool mode stored under KEY in SERVER, or nil if unset.
+
+KEY is a keyword such as :emcp-tools-eval-mode.  The mode applies to all
+clients of SERVER.  Set it with `setf'."
+  (plist-get (emcp--server-modes server) key))
+
+(gv-define-setter emcp--server-mode (mode server key)
+  `(setf (plist-get (emcp--server-modes ,server) ,key) ,mode))
 
 (cl-defun emcp--server-build (&key name prompts resources tools)
   "Build a new MCP server from lists of capability symbols.

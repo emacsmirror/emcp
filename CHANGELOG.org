@@ -1,0 +1,7 @@
+#+title: Changelog
+All notable changes to this project will be documented in this file.
+
+The format is based on [[https://keepachangelog.com/en/1.0.0/][Keep a Changelog]].
+* Unreleased
+** Changed
+- The accept/reject modes of the =eval= and =send-keys= tools apply to the whole server instead of a single session. Choosing "Always accept" or "Always reject" in a confirmation buffer now affects all clients connected to that server, and the session manager shows and cycles (=e=, =K=) the modes per server.

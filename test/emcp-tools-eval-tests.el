@@ -45,39 +45,40 @@
                 :type 'emcp-tools-eval-parse-error))
 
 (ert-deftest emcp-tests-eval-authorize-mode-accept ()
-  ;; Session mode `accept' overrides a default-reject policy.
-  (let ((emcp-tools-eval-default-policy nil))
-    (should (eq (emcp-tools-eval--authorize
-                 (list :emcp-tools-eval-mode 'accept))
-                t))))
+  ;; Server mode `accept' overrides a default-reject policy.
+  (emcp-test-with-server server (emcp--server-build)
+    (setf (emcp--server-mode server :emcp-tools-eval-mode) 'accept)
+    (let ((emcp-tools-eval-default-policy nil))
+      (should (eq (emcp-tools-eval--authorize server) t)))))
 
 (ert-deftest emcp-tests-eval-authorize-mode-reject ()
-  ;; Session mode `reject' overrides a default-accept policy.
-  (let ((emcp-tools-eval-default-policy t))
-    (should (eq (emcp-tools-eval--authorize
-                 (list :emcp-tools-eval-mode 'reject))
-                nil))))
+  ;; Server mode `reject' overrides a default-accept policy.
+  (emcp-test-with-server server (emcp--server-build)
+    (setf (emcp--server-mode server :emcp-tools-eval-mode) 'reject)
+    (let ((emcp-tools-eval-default-policy t))
+      (should (eq (emcp-tools-eval--authorize server) nil)))))
 
 (ert-deftest emcp-tests-eval-authorize-default-action ()
-  (let ((emcp-tools-eval-default-policy t))
-    (should (eq (emcp-tools-eval--authorize nil) t)))
-  (let ((emcp-tools-eval-default-policy nil))
-    (should (eq (emcp-tools-eval--authorize nil) nil)))
-  (let ((emcp-tools-eval-default-policy 'ask))
-    (should (eq (emcp-tools-eval--authorize nil) 'ask))))
+  (emcp-test-with-server server (emcp--server-build)
+    (let ((emcp-tools-eval-default-policy t))
+      (should (eq (emcp-tools-eval--authorize server) t)))
+    (let ((emcp-tools-eval-default-policy nil))
+      (should (eq (emcp-tools-eval--authorize server) nil)))
+    (let ((emcp-tools-eval-default-policy 'ask))
+      (should (eq (emcp-tools-eval--authorize server) 'ask)))))
 
 (ert-deftest emcp-tests-eval-action-once ()
-  (should (eq (emcp-tools-eval--apply-action 'yes-once nil) t))
-  (should (eq (emcp-tools-eval--apply-action 'no-once nil) nil)))
+  (emcp-test-with-server server (emcp--server-build)
+    (should (eq (emcp-tools-eval--apply-action 'yes-once server) t))
+    (should (eq (emcp-tools-eval--apply-action 'no-once server) nil))))
 
 (ert-deftest emcp-tests-eval-action-mode ()
-  ;; Real sessions always have at least an :id key so `plist-put' mutates
-  ;; in place.
-  (let ((session (list :id "test-session")))
-    (should (eq (emcp-tools-eval--apply-action 'mode-accept session) t))
-    (should (eq (plist-get session :emcp-tools-eval-mode) 'accept))
-    (should (eq (emcp-tools-eval--apply-action 'mode-reject session) nil))
-    (should (eq (plist-get session :emcp-tools-eval-mode) 'reject))))
+  (emcp-test-with-server server (emcp--server-build)
+    (let ((emcp-tools-eval-default-policy 'ask))
+      (should (eq (emcp-tools-eval--apply-action 'mode-accept server) t))
+      (should (eq (emcp-tools-eval--authorize server) t))
+      (should (eq (emcp-tools-eval--apply-action 'mode-reject server) nil))
+      (should (eq (emcp-tools-eval--authorize server) nil)))))
 
 (ert-deftest emcp-tests-eval-tool-default-accept ()
   (let ((emcp-tools-eval-default-policy t))

@@ -20,7 +20,7 @@
 ;;; Commentary:
 
 ;; An MCP tool to allow agents to evaluate arbitrary Emacs Lisp.  Each call goes through a
-;; confirmation buffer; the user can also enable a session-wide accept or reject mode.
+;; confirmation buffer; the user can also enable a server-wide accept or reject mode.
 
 ;;; Code:
 
@@ -40,7 +40,7 @@
   :group 'emcp)
 
 (defcustom emcp-tools-eval-default-policy 'ask
-  "Default action when no session mode applies.
+  "Default action when no server mode applies.
 
 t    always accept without prompting,
 nil  always reject without prompting,
@@ -83,16 +83,15 @@ a message on failure.  Multiple top-level forms are wrapped in (progn
 
 ;;; Authorization
 
-(defun emcp-tools-eval--authorize (session)
-  "Authorize an eval call in SESSION.
+(defun emcp-tools-eval--authorize (server)
+  "Authorize an eval call on SERVER.
 
 Return t (accept), nil (reject), or `ask' (ask user)."
-  (let ((mode (plist-get session :emcp-tools-eval-mode)))
-    (cond
-     ((eq mode 'accept) t)
-     ((eq mode 'reject) nil)
-     ((eq mode 'ask) 'ask)
-     (t emcp-tools-eval-default-policy))))
+  (pcase (emcp--server-mode server :emcp-tools-eval-mode)
+    ('accept t)
+    ('reject nil)
+    ('ask 'ask)
+    (_ emcp-tools-eval-default-policy)))
 
 ;;; Confirmation buffer
 
@@ -102,15 +101,19 @@ Return t (accept), nil (reject), or `ask' (ask user)."
   (kill-new (plist-get (plist-get emcp-confirm--pending :context) :code))
   (message "EMCP: code copied to kill-ring"))
 
-(defun emcp-tools-eval--apply-action (action session)
-  "Convert ACTION into a decision about an eval call in SESSION.
+(defun emcp-tools-eval--apply-action (action server)
+  "Convert ACTION into a decision about an eval call on SERVER.
 
-May mutate SESSION to record a session mode."
+May record a server mode in SERVER."
   (pcase action
     ('yes-once    t)
     ('no-once     nil)
-    ('mode-accept (plist-put session :emcp-tools-eval-mode 'accept) t)
-    ('mode-reject (plist-put session :emcp-tools-eval-mode 'reject) nil)))
+    ('mode-accept
+     (setf (emcp--server-mode server :emcp-tools-eval-mode) 'accept)
+     t)
+    ('mode-reject
+     (setf (emcp--server-mode server :emcp-tools-eval-mode) 'reject)
+     nil)))
 
 (defun emcp-tools-eval--fontify-elisp (str)
   "Return STR with `emacs-lisp-mode' font-lock applied.
@@ -142,14 +145,14 @@ action."
      `(( :title "Accept?"
          :actions ((?y "Yes" :result yes-once)
                    (?n "No"  :result no-once)))
-       ( :title "Session mode (applies to all subsequent eval calls in this session)"
+       ( :title "Server mode (applies to all subsequent eval calls on this server)"
          :actions ((?a "Always accept" :result mode-accept)
                    (?r "Always reject" :result mode-reject)))
        ( :actions ((?w "Copy code to kill-ring"
                        :command emcp-tools-eval--copy-code-to-kill-ring))))
      :callback (lambda (action)
                  (funcall callback
-                          (emcp-tools-eval--apply-action action session))))))
+                          (emcp-tools-eval--apply-action action server))))))
 
 ;;; Decision logging
 
@@ -167,16 +170,16 @@ the form that was decided on."
 
 ;;; The tool
 
-(defun emcp-tools-eval--decision-source (session)
-  "Return a symbol describing why an eval call was decided in SESSION.
+(defun emcp-tools-eval--decision-source (server)
+  "Return a symbol describing why an eval call was decided on SERVER.
 
 Used only for logging.  The result is one of:
-- `mode' if SESSION has an accept/reject mode set,
-- `user' if SESSION has an `ask' mode set or `emcp-tools-eval-default-policy'
+- `mode' if SERVER has an accept/reject mode set,
+- `user' if SERVER has an `ask' mode set or `emcp-tools-eval-default-policy'
   is `ask' (the user is consulted via the confirmation buffer),
 - `default' if `emcp-tools-eval-default-policy' is t or nil
   (auto-decided without asking)."
-  (let ((mode (plist-get session :emcp-tools-eval-mode)))
+  (let ((mode (emcp--server-mode server :emcp-tools-eval-mode)))
     (cond
      ((memq mode '(accept reject)) 'mode)
      ((or (eq mode 'ask)
@@ -210,7 +213,7 @@ Used only for logging.  The result is one of:
 
 To enhance the safety of letting an agent execute arbitrary code, every
 tool call goes through a confirmation buffer.  The user can also enable
-a session-wide accept or reject mode for trusted or untrusted sessions."
+an accept or reject mode for the whole server."
   :name "eval"
   :description "Evaluate Emacs Lisp code in the running Emacs instance and return the
 value of the final form.
@@ -227,10 +230,10 @@ and decision fatigue."
   :async t
   (condition-case err
       (let* ((form (emcp-tools-eval--parse code))
-             (decision (emcp-tools-eval--authorize session))
+             (decision (emcp-tools-eval--authorize server))
              ;; Capture the source before the prompt opens: a mode-accept or mode-reject
              ;; pick by the user would otherwise relabel this call's source to `mode'.
-             (source (emcp-tools-eval--decision-source session)))
+             (source (emcp-tools-eval--decision-source server)))
         (cl-flet ((maybe-eval (accept)
                     (emcp--log server session
                       (info (emcp-tools-eval--format-log accept source form)))

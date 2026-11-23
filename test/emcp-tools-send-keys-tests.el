@@ -28,39 +28,40 @@
 (require 'ert)
 
 (ert-deftest emcp-tests-send-keys-authorize-mode-accept ()
-  ;; Session mode `accept' overrides a default-reject policy.
-  (let ((emcp-tools-send-keys-default-policy nil))
-    (should (eq (emcp-tools-send-keys--authorize
-                 (list :emcp-tools-send-keys-mode 'accept))
-                t))))
+  ;; Server mode `accept' overrides a default-reject policy.
+  (emcp-test-with-server server (emcp--server-build)
+    (setf (emcp--server-mode server :emcp-tools-send-keys-mode) 'accept)
+    (let ((emcp-tools-send-keys-default-policy nil))
+      (should (eq (emcp-tools-send-keys--authorize server) t)))))
 
 (ert-deftest emcp-tests-send-keys-authorize-mode-reject ()
-  ;; Session mode `reject' overrides a default-accept policy.
-  (let ((emcp-tools-send-keys-default-policy t))
-    (should (eq (emcp-tools-send-keys--authorize
-                 (list :emcp-tools-send-keys-mode 'reject))
-                nil))))
+  ;; Server mode `reject' overrides a default-accept policy.
+  (emcp-test-with-server server (emcp--server-build)
+    (setf (emcp--server-mode server :emcp-tools-send-keys-mode) 'reject)
+    (let ((emcp-tools-send-keys-default-policy t))
+      (should (eq (emcp-tools-send-keys--authorize server) nil)))))
 
 (ert-deftest emcp-tests-send-keys-authorize-default ()
-  (let ((emcp-tools-send-keys-default-policy t))
-    (should (eq (emcp-tools-send-keys--authorize nil) t)))
-  (let ((emcp-tools-send-keys-default-policy nil))
-    (should (eq (emcp-tools-send-keys--authorize nil) nil)))
-  (let ((emcp-tools-send-keys-default-policy 'ask))
-    (should (eq (emcp-tools-send-keys--authorize nil) 'ask))))
+  (emcp-test-with-server server (emcp--server-build)
+    (let ((emcp-tools-send-keys-default-policy t))
+      (should (eq (emcp-tools-send-keys--authorize server) t)))
+    (let ((emcp-tools-send-keys-default-policy nil))
+      (should (eq (emcp-tools-send-keys--authorize server) nil)))
+    (let ((emcp-tools-send-keys-default-policy 'ask))
+      (should (eq (emcp-tools-send-keys--authorize server) 'ask)))))
 
 (ert-deftest emcp-tests-send-keys-action-once ()
-  (should (eq (emcp-tools-send-keys--apply-action 'yes-once nil) t))
-  (should (eq (emcp-tools-send-keys--apply-action 'no-once nil) nil)))
+  (emcp-test-with-server server (emcp--server-build)
+    (should (eq (emcp-tools-send-keys--apply-action 'yes-once server) t))
+    (should (eq (emcp-tools-send-keys--apply-action 'no-once server) nil))))
 
 (ert-deftest emcp-tests-send-keys-action-mode ()
-  ;; Real sessions always have at least an :id key so `plist-put' mutates
-  ;; in place.
-  (let ((session (list :id "test-session")))
-    (should (eq (emcp-tools-send-keys--apply-action 'mode-accept session) t))
-    (should (eq (plist-get session :emcp-tools-send-keys-mode) 'accept))
-    (should (eq (emcp-tools-send-keys--apply-action 'mode-reject session) nil))
-    (should (eq (plist-get session :emcp-tools-send-keys-mode) 'reject))))
+  (emcp-test-with-server server (emcp--server-build)
+    (let ((emcp-tools-send-keys-default-policy 'ask))
+      (should (eq (emcp-tools-send-keys--apply-action 'mode-accept server) t))
+      (should (eq (emcp-tools-send-keys--authorize server) t))
+      (should (eq (emcp-tools-send-keys--apply-action 'mode-reject server) nil))
+      (should (eq (emcp-tools-send-keys--authorize server) nil)))))
 
 (ert-deftest emcp-tests-send-keys-tool-default-accept ()
   ;; Self-insert keys land in the buffer of the selected window at call time.

@@ -20,7 +20,7 @@
 ;;; Commentary:
 
 ;; A UI for managing client sessions across all running EMCP servers.  Allows quick access
-;; to the server log, managing a session's code evaluation state and more.
+;; to the server log, managing a server's code evaluation state and more.
 
 ;;; Code:
 
@@ -68,7 +68,7 @@
   :type 'string)
 
 (defconst emcp-session-manager--modes '(accept reject ask)
-  "Possible session-mode values shown in the session manager.
+  "Possible values of a server mode shown in the session manager.
 
 Cycling progresses through this list in order.")
 
@@ -95,12 +95,12 @@ plain `face' property, so faces have to also be set under
 
 ;;; Effective-mode resolution
 
-(defun emcp-session-manager--effective-mode (session key default-policy)
-  "Return the effective mode for SESSION's KEY plist property.
+(defun emcp-session-manager--effective-mode (server key default-policy)
+  "Return the effective mode stored under KEY in SERVER.
 
-If no session mode is set, fall back to DEFAULT-POLICY translated to
+If no server mode is set, fall back to DEFAULT-POLICY translated to
 one of `accept', `reject' or `ask'."
-  (let ((mode (plist-get session key)))
+  (let ((mode (emcp--server-mode server key)))
     (cond
      ((memq mode emcp-session-manager--modes) mode)
      ((eq default-policy t) 'accept)
@@ -158,14 +158,8 @@ one of `accept', `reject' or `ask'."
 
 (defun emcp-session-manager--insert-session (profile session)
   "Insert a section for SESSION belonging to PROFILE's server."
-  (let* ((id (plist-get session :id))
-         (label (emcp--session-label session))
-         (eval-mode (emcp-session-manager--effective-mode
-                     session :emcp-tools-eval-mode
-                     emcp-tools-eval-default-policy))
-         (send-keys-mode (emcp-session-manager--effective-mode
-                          session :emcp-tools-send-keys-mode
-                          emcp-tools-send-keys-default-policy)))
+  (let ((id (plist-get session :id))
+        (label (emcp--session-label session)))
     (magit-insert-section (emcp-session (cons profile id))
       (magit-insert-heading
         (emcp-session-manager--propertize label 'emcp-session-manager-session)
@@ -180,14 +174,23 @@ one of `accept', `reject' or `ask'."
                         (format-time-string "%Y-%m-%d %H:%M:%S" last-message))))
       (when-let* ((client (emcp-session-manager--client-info session)))
         (insert (format "    Client:         %s\n" client)))
-      (insert "    "
-              (emcp-session-manager--mode-line
-               "Eval" eval-mode #'emcp-session-manager-cycle-eval-mode)
-              "\n")
-      (insert "    "
-              (emcp-session-manager--mode-line
-               "Send-keys" send-keys-mode #'emcp-session-manager-cycle-send-keys-mode)
-              "\n\n"))))
+      (insert "\n"))))
+
+(defun emcp-session-manager--insert-mode-lines (server)
+  "Insert the eval and send-keys mode lines of SERVER."
+  (insert "  "
+          (emcp-session-manager--mode-line
+           "Eval"
+           (emcp-session-manager--effective-mode
+            server :emcp-tools-eval-mode emcp-tools-eval-default-policy)
+           #'emcp-session-manager-cycle-eval-mode)
+          "\n  "
+          (emcp-session-manager--mode-line
+           "Send-keys"
+           (emcp-session-manager--effective-mode
+            server :emcp-tools-send-keys-mode emcp-tools-send-keys-default-policy)
+           #'emcp-session-manager-cycle-send-keys-mode)
+          "\n"))
 
 (defun emcp-session-manager--insert-log-line (server)
   "Insert a single-line section pointing at SERVER's log buffer."
@@ -213,6 +216,7 @@ one of `accept', `reject' or `ask'."
                                           'emcp-session-manager-server)
         (if url (concat "  " url) ""))
       (emcp-session-manager--insert-log-line server)
+      (emcp-session-manager--insert-mode-lines server)
       (cond
        ((null sessions)
         (insert "  (no active sessions)\n"))
@@ -305,28 +309,26 @@ types.  Returns nil when no matching section exists."
     (move-to-column col)))
 
 (defun emcp-session-manager--cycle-mode (key default-policy label)
-  "Cycle the session mode stored under KEY for the session at point.
+  "Cycle the server mode stored under KEY for the server enclosing point.
 
 DEFAULT-POLICY is the default policy custom for the corresponding tool and
 LABEL is a string describing the mode for the user-facing message."
-  (pcase-let* ((`(,_profile ,_server ,session)
-                (emcp-session-manager--session-at-point))
+  (pcase-let* ((`(,profile . ,server) (emcp-session-manager--server-at-point))
                (current (emcp-session-manager--effective-mode
-                         session key default-policy))
+                         server key default-policy))
                (next (emcp-session-manager--cycle current)))
-    (plist-put session key next)
+    (setf (emcp--server-mode server key) next)
     (emcp-session-manager-refresh)
-    (message "%s mode for %s: %s -> %s"
-             label (emcp--session-label session) current next)))
+    (message "%s mode for %s: %s -> %s" label profile current next)))
 
 (defun emcp-session-manager-cycle-eval-mode ()
-  "Cycle the eval-tool session mode for the session at point."
+  "Cycle the eval-tool mode of the server enclosing point."
   (interactive)
   (emcp-session-manager--cycle-mode
    :emcp-tools-eval-mode emcp-tools-eval-default-policy "Eval"))
 
 (defun emcp-session-manager-cycle-send-keys-mode ()
-  "Cycle the send-keys-tool session mode for the session at point."
+  "Cycle the send-keys-tool mode of the server enclosing point."
   (interactive)
   (emcp-session-manager--cycle-mode
    :emcp-tools-send-keys-mode emcp-tools-send-keys-default-policy "Send-keys"))
@@ -379,7 +381,7 @@ on a server section but not one of its sessions."
   "Pop up the EMCP session manager.
 
 Lists running EMCP servers and their active client sessions, lets the user
-inspect and cycle each session's eval and send-keys mode in place, and gives
+inspect and cycle each server's eval and send-keys mode in place, and gives
 quick access to each server's log buffer."
   (interactive)
   (let ((buf (get-buffer-create emcp-session-manager-buffer-name)))

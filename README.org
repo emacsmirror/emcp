@@ -80,7 +80,7 @@ Tools that allow agents to execute arbitrary code, e.g. through code evaluation 
 
 ** Session management
 
-Start the session manager with =M-x emcp-session-manager=. It gives you an overview over all running servers and their sessions, so that you can easily see which agent in which project is connected to EMCP. From the manager view, you can also change the policies of the =eval= and =send-keys= tools, so if you have put a session in accept mode, which accepts all code evaluations and does not ask for your input anymore, you can return a session to the default ask mode. Press =l= to jump to a server's log buffer or =k= to kill a server you no longer need.
+Start the session manager with =M-x emcp-session-manager=. It gives you an overview over all running servers and their sessions, so that you can easily see which agent in which project is connected to EMCP. From the manager view, you can also change the policies of the =eval= and =send-keys= tools, so if you have put a server in accept mode, which accepts all code evaluations from all of its clients and does not ask for your input anymore, you can return it to the default ask mode. Press =l= to jump to a server's log buffer or =k= to kill a server you no longer need.
 
 #+caption: The session manager lets you inspect the sessions and update their policies
 #+attr_html: :width 640
@@ -701,11 +701,11 @@ View screenshots of all visible Emacs frames.
 
 Send a key sequence to Emacs as if the user typed it.
 
-Each call requires user confirmation, with optional session-wide accept
-or reject modes for trusted or untrusted sessions.  Decisions are not
-cached across calls: the effect of a key sequence depends on the current
-buffer, mode, and minibuffer state, so a past decision is rarely a good
-guide for a future one.
+Each call requires user confirmation, with optional accept or reject
+modes for the whole server.  Decisions are not cached across calls: the
+effect of a key sequence depends on the current buffer, mode, and
+minibuffer state, so a past decision is rarely a good guide for a future
+one.
 
 Parameters:
 - =keys= (string) :: Key sequence in `kbd' notation, e.g. =C-x C-f=, =M-x list-buffers RET=, or =h e l l o= for literal characters.

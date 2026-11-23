@@ -21,7 +21,7 @@
 
 ;; An MCP tool to allow agents to send arbitrary key sequences to Emacs.  Each
 ;; call goes through a confirmation buffer; the user can also enable a
-;; session-wide accept or reject mode.  Decisions are deliberately not cached:
+;; server-wide accept or reject mode.  Decisions are deliberately not cached:
 ;; identical key sequences may have very different effects depending on the
 ;; current buffer, mode, and minibuffer state, so reusing a past decision is
 ;; rarely safe.
@@ -39,7 +39,7 @@
   :group 'emcp)
 
 (defcustom emcp-tools-send-keys-default-policy 'ask
-  "Default action when no session mode applies.
+  "Default action when no server mode applies.
 
 t    always accept without prompting,
 nil  always reject without prompting,
@@ -51,28 +51,31 @@ ask  open the confirmation buffer."
 
 ;;; Authorization
 
-(defun emcp-tools-send-keys--authorize (session)
-  "Authorize a send-keys call in SESSION.
+(defun emcp-tools-send-keys--authorize (server)
+  "Authorize a send-keys call on SERVER.
 
 Return t (accept), nil (reject), or `ask' (ask user)."
-  (let ((mode (plist-get session :emcp-tools-send-keys-mode)))
-    (cond
-     ((eq mode 'accept) t)
-     ((eq mode 'reject) nil)
-     ((eq mode 'ask) 'ask)
-     (t emcp-tools-send-keys-default-policy))))
+  (pcase (emcp--server-mode server :emcp-tools-send-keys-mode)
+    ('accept t)
+    ('reject nil)
+    ('ask 'ask)
+    (_ emcp-tools-send-keys-default-policy)))
 
 ;;; Confirmation buffer
 
-(defun emcp-tools-send-keys--apply-action (action session)
-  "Convert ACTION into a decision about a send-keys call in SESSION.
+(defun emcp-tools-send-keys--apply-action (action server)
+  "Convert ACTION into a decision about a send-keys call on SERVER.
 
-May mutate SESSION to record a session mode."
+May record a server mode in SERVER."
   (pcase action
     ('yes-once    t)
     ('no-once     nil)
-    ('mode-accept (plist-put session :emcp-tools-send-keys-mode 'accept) t)
-    ('mode-reject (plist-put session :emcp-tools-send-keys-mode 'reject) nil)))
+    ('mode-accept
+     (setf (emcp--server-mode server :emcp-tools-send-keys-mode) 'accept)
+     t)
+    ('mode-reject
+     (setf (emcp--server-mode server :emcp-tools-send-keys-mode) 'reject)
+     nil)))
 
 (defun emcp-tools-send-keys--prompt (server session keys callback)
   "Open the confirmation buffer for SERVER, SESSION and KEYS.
@@ -91,12 +94,12 @@ Customize placement of the confirmation buffer by adding an entry for
    `(( :title "Accept?"
        :actions ((?y "Yes" :result yes-once)
                  (?n "No"  :result no-once)))
-     ( :title "Session mode (applies to all subsequent send-keys calls in this session)"
+     ( :title "Server mode (applies to all subsequent send-keys calls on this server)"
        :actions ((?a "Always accept" :result mode-accept)
                  (?r "Always reject" :result mode-reject))))
    :callback (lambda (action)
                (funcall callback
-                        (emcp-tools-send-keys--apply-action action session)))))
+                        (emcp-tools-send-keys--apply-action action server)))))
 
 ;;; Decision logging
 
@@ -111,17 +114,17 @@ decided on."
           (symbol-name reason)
           (if (> (length keys) 80) (concat (substring keys 0 77) "...") keys)))
 
-(defun emcp-tools-send-keys--decision-source (session)
-  "Return a symbol describing why a send-keys call was decided in SESSION.
+(defun emcp-tools-send-keys--decision-source (server)
+  "Return a symbol describing why a send-keys call was decided on SERVER.
 
 Used only for logging.  The result is one of:
-- `mode' if SESSION has an accept/reject mode set,
-- `user' if SESSION has an `ask' mode set or
+- `mode' if SERVER has an accept/reject mode set,
+- `user' if SERVER has an `ask' mode set or
   `emcp-tools-send-keys-default-policy' is `ask' (the user is consulted via
   the confirmation buffer),
 - `default' if `emcp-tools-send-keys-default-policy' is t or nil
   (auto-decided without asking)."
-  (let ((mode (plist-get session :emcp-tools-send-keys-mode)))
+  (let ((mode (emcp--server-mode server :emcp-tools-send-keys-mode)))
     (cond
      ((memq mode '(accept reject)) 'mode)
      ((or (eq mode 'ask)
@@ -161,11 +164,11 @@ longer live, send an error result without executing anything."
     ((keys "Key sequence in `kbd' notation, e.g. =C-x C-f=, =M-x list-buffers RET=, or =h e l l o= for literal characters."))
   "Send a key sequence to Emacs as if the user typed it.
 
-Each call requires user confirmation, with optional session-wide accept
-or reject modes for trusted or untrusted sessions.  Decisions are not
-cached across calls: the effect of a key sequence depends on the current
-buffer, mode, and minibuffer state, so a past decision is rarely a good
-guide for a future one."
+Each call requires user confirmation, with optional accept or reject
+modes for the whole server.  Decisions are not cached across calls: the
+effect of a key sequence depends on the current buffer, mode, and
+minibuffer state, so a past decision is rarely a good guide for a future
+one."
   :name "send-keys"
   :description "Send a key sequence to Emacs as if the user typed it.
 
@@ -175,10 +178,10 @@ responds.  Decisions are not cached, so every call prompts the user.
 Prefer a more specialized tool if available to minimize user interaction
 and decision fatigue."
   :async t
-  (let ((decision (emcp-tools-send-keys--authorize session))
+  (let ((decision (emcp-tools-send-keys--authorize server))
         ;; Capture the source before the prompt opens: a mode-accept or mode-reject pick
         ;; by the user would otherwise relabel this call's source to `mode'.
-        (source (emcp-tools-send-keys--decision-source session))
+        (source (emcp-tools-send-keys--decision-source server))
         ;; Capture now, since the confirmation buffer's `pop-to-buffer' may change the
         ;; selected window
         (target-window (selected-window)))
