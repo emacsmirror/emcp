@@ -125,8 +125,8 @@ definition wins, so a profile can override items from included profiles."
       (resolve profile))
     (let ((result (cl-copy-list profile)))
       (cl-remf result :include)
-      (plist-put result :prompts (emcp--dedup-by-name prompts '(emcp-prompt)))
-      (plist-put result :resources (emcp--dedup-by-name resources '(emcp-resource emcp-resource-template)))
+      (setq result (plist-put result :prompts (emcp--dedup-by-name prompts '(emcp-prompt))))
+      (setq result (plist-put result :resources (emcp--dedup-by-name resources '(emcp-resource emcp-resource-template))))
       (plist-put result :tools (emcp--dedup-by-name tools '(emcp-tool))))))
 
 (defun emcp--dedup-by-name (symbols properties)
