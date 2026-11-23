@@ -626,7 +626,7 @@ Parameters:
 - =symbol= (string) :: Name of the symbol to describe.
 - =kind= (string, optional) :: Restrict to a kind of definition ("any", "function", "command", "macro", "variable", "custom", "face", "feature" or "widget").
 
-*** =eval= [[./emcp-tools-eval.el::210][~emcp-tools-eval~]]
+*** =eval= [[./emcp-tools-eval.el::211][~emcp-tools-eval~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-eval
 :END:
@@ -694,7 +694,7 @@ Parameters:
 
 View screenshots of all visible Emacs frames.
 
-*** =send-keys= [[./emcp-tools-send-keys.el::163][~emcp-tools-send-keys~]]
+*** =send-keys= [[./emcp-tools-send-keys.el::164][~emcp-tools-send-keys~]]
 :PROPERTIES:
 :CUSTOM_ID: tool-send-keys
 :END:
@@ -832,7 +832,7 @@ Default: ~"*EMCP confirm*"~
 
 Default: ~0.2~
 
-** [[./emcp-confirm.el::251][~emcp-confirm-notify-darwin-bundle-id~]]
+** [[./emcp-confirm.el::258][~emcp-confirm-notify-darwin-bundle-id~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-confirm-notify-darwin-bundle-id
 :END:
@@ -846,7 +846,7 @@ Default: ~0.2~
 
 Default: ~"org.gnu.Emacs"~
 
-** [[./emcp-confirm.el::309][~emcp-confirm-notify-function~]]
+** [[./emcp-confirm.el::316][~emcp-confirm-notify-function~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-confirm-notify-function
 :END:
@@ -918,7 +918,7 @@ Default: ~t~
 
 Default: ~"Inspect and control the user's running Emacs.\n\nUse this when you are\n- answering questions about Emacs,\n- debugging Emacs,\n- programming or planning Emacs Lisp,\n- looking up Emacs Lisp files,\n- or controlling an Emacs instance.\n\nPrefer this server over file operations or shell commands when working in an Emacs context."~
 
-** [[./emcp-core.el::68][~emcp-log-level~]]
+** [[./emcp-core.el::70][~emcp-log-level~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-log-level
 :END:
@@ -958,14 +958,14 @@ Default:
 	       (emcp-tools-eval emcp-tools-send-keys)))
 #+end_src
 
-** [[./emcp-session-manager.el::65][~emcp-session-manager-buffer-name~]]
+** [[./emcp-server-manager.el::62][~emcp-server-manager-buffer-name~]]
 :PROPERTIES:
-:CUSTOM_ID: custom-emcp-session-manager-buffer-name
+:CUSTOM_ID: custom-emcp-server-manager-buffer-name
 :END:
 
-: Name of the session manager buffer.
+: Name of the server manager buffer.
 
-Default: ~"*EMCP sessions*"~
+Default: ~"*EMCP servers*"~
 
 ** [[./emcp-tools-eval.el::42][~emcp-tools-eval-default-policy~]]
 :PROPERTIES:

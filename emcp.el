@@ -42,7 +42,7 @@
 
 (require 'emcp-resources)
 (require 'emcp-screenshot)
-(require 'emcp-session-manager)
+(require 'emcp-server-manager)
 (require 'emcp-tools)
 (require 'emcp-tools-eval)
 (require 'emcp-tools-send-keys)

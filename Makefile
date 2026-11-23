@@ -3,7 +3,7 @@ EMACS ?= emacs
 EL_FILES = emcp-uri.el emcp-core.el emcp-confirm.el emcp-http.el \
   emcp-resources.el \
   emcp-screenshot.el \
-  emcp-session-manager.el \
+  emcp-server-manager.el \
   emcp-tools.el emcp-tools-eval.el emcp-tools-send-keys.el \
   emcp.el
 
