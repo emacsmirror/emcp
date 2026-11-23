@@ -111,15 +111,17 @@ profiles.  When the same MCP name appears more than once, the last
 definition wins, so a profile can override items from included profiles."
   (let (visited prompts resources tools)
     (cl-labels ((resolve (p)
-                  (setq prompts (append prompts (plist-get p :prompts)))
-                  (setq resources (append resources (plist-get p :resources)))
-                  (setq tools (append tools (plist-get p :tools)))
+                  ;; Included recursively first so that own items
+                  ;; overwrite included in the deduplication
                   (dolist (name (plist-get p :include))
                     (unless (memq name visited)
                       (push name visited)
                       (if-let* ((included (alist-get name emcp-profiles)))
                           (resolve included)
-                        (user-error "Unknown profile: %s" name))))))
+                        (user-error "Unknown profile: %s" name))))
+                  (setq prompts (append prompts (plist-get p :prompts)))
+                  (setq resources (append resources (plist-get p :resources)))
+                  (setq tools (append tools (plist-get p :tools)))))
       (resolve profile))
     (let ((result (cl-copy-list profile)))
       (cl-remf result :include)
