@@ -144,6 +144,23 @@
                            (message . "Cannot speak language")
                            (data . ((language . "English")))))))))))
 
+(ert-deftest emcp-tests-prompt-without-arguments ()
+  "A prompt with only optional arguments works without an arguments field."
+  (let ((sym (make-symbol "optional-prompt")))
+    (eval
+     `(emcp-defprompt ,sym ((lang :default "German"))
+        "A prompt with an optional argument."
+        `((messages . [((role . "user")
+                        (content . ((type . "text") (text . ,lang))))])))
+     t)
+    (emcp-test-with-server server (emcp--server-build :prompts (list sym))
+      (let ((client (emcp-test-make-client :server server)))
+        (should (equal (emcp-test-response-data
+                        (emcp-test-client-request
+                         client "prompts/get" `((name . ,(symbol-name sym)))))
+                       '((messages . [((role . "user")
+                                       (content . ((type . "text") (text . "German"))))]))))))))
+
 ;;; Tools
 
 (ert-deftest emcp-tests-sync-tool ()
@@ -238,6 +255,21 @@
                          `((code . 1001)
                            (message . "Addition is hard")
                            (data . ((name . "Gnu")))))))))))
+
+(ert-deftest emcp-tests-tool-without-arguments ()
+  "A tool with only optional arguments works without an arguments field."
+  (let ((sym (make-symbol "optional-tool")))
+    (eval
+     `(emcp-deftool ,sym ((n :type "number" :default 1))
+        "A tool with an optional argument."
+        `((content . [((type . "text") (text . ,(number-to-string n)))])))
+     t)
+    (emcp-test-with-server server (emcp--server-build :tools (list sym))
+      (let ((client (emcp-test-make-client :server server)))
+        (should (equal (emcp-test-response-data
+                        (emcp-test-client-request
+                         client "tools/call" `((name . ,(symbol-name sym)))))
+                       '((content . [((type . "text") (text . "1"))]))))))))
 
 (ert-deftest emcp-tests-tools-list-order ()
   ;; tools/list follows the profile order, on every call and after a
@@ -556,6 +588,18 @@ META-ARGS override or omit _meta fields, see `emcp-test-make-request-meta'."
                                           client method '((name . "missing"))))))
             (should (= (alist-get 'code error) emcp--jsonrpc-invalid-params))
             (should (equal (alist-get 'message error) message))))))))
+
+(ert-deftest emcp-tests-non-object-arguments ()
+  "Arguments that are not an object are invalid params, as per the schema."
+  (emcp-test-with-server server (apply #'emcp--server-build emcp-test-primitives)
+    (let ((client (emcp-test-make-client :server server)))
+      (pcase-dolist (`(,method ,name) '(("tools/call" "tool") ("prompts/get" "prompt")))
+        (dolist (arguments '("text" [1 2]))
+          (ert-info ((format "%s %S" method arguments))
+            (should (= (emcp-tests--error-code
+                        (emcp-test-client-request
+                         client method `((name . ,name) (arguments . ,arguments))))
+                       emcp--jsonrpc-invalid-params))))))))
 
 ;;; Results
 

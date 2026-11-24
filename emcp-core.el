@@ -787,6 +787,15 @@ SEND-RESPONSE is called with the response to REQUEST."
               request (emcp--mcp-cacheable `((prompts . ,(vconcat descriptions)))
                                            emcp-list-ttl-ms "public")))))
 
+(defun emcp--request-arguments (params)
+  "Return the arguments of the tools/call or prompts/get PARAMS.
+
+Missing arguments, which the spec allows, yield an empty hash table.
+Return nil if the arguments are not an object."
+  (let ((args (and (hash-table-p params) (gethash "arguments" params))))
+    (cond ((null args) (make-hash-table :test #'equal))
+          ((hash-table-p args) args))))
+
 (defun emcp--server-request--prompts-get (server context request send-response)
   "Execute a prompt on SERVER with request CONTEXT.
 
@@ -794,14 +803,19 @@ SEND-RESPONSE is called with the response to REQUEST."
   (let* ((params (gethash "params" request))
          (name (and (hash-table-p params) (gethash "name" params)))
          (prompt (gethash name (emcp--server-prompts server)))
-         (args (and (hash-table-p params) (gethash "arguments" params))))
+         (args (emcp--request-arguments params)))
     (cl-flet ((send-result (result)
                 (funcall send-response (emcp--mcp-result request result)))
               (send-error (code message &optional data)
                 (funcall send-response (emcp--jsonrpc-error request code message data))))
-      (if prompt
-          (funcall prompt server context #'send-result #'send-error args)
-        (send-error emcp--jsonrpc-invalid-params (format "Unknown prompt: %s" name))))))
+      (cond
+       ((not prompt)
+        (send-error emcp--jsonrpc-invalid-params (format "Unknown prompt: %s" name)))
+       ;; The schema requires an object, so anything else is malformed
+       ((not args)
+        (send-error emcp--jsonrpc-invalid-params "Arguments must be an object"))
+       (t
+        (funcall prompt server context #'send-result #'send-error args))))))
 
 (defun emcp--server-request--resources-list (server _context request send-response)
   "List all static resources on SERVER.
@@ -897,14 +911,19 @@ SEND-RESPONSE is called with the response to REQUEST."
   (let* ((params (gethash "params" request))
          (name (and (hash-table-p params) (gethash "name" params)))
          (tool (gethash name (emcp--server-tools server)))
-         (args (and (hash-table-p params) (gethash "arguments" params))))
+         (args (emcp--request-arguments params)))
     (cl-flet ((send-result (result)
                 (funcall send-response (emcp--mcp-result request result)))
               (send-error (code message &optional data)
                 (funcall send-response (emcp--jsonrpc-error request code message data))))
-      (if tool
-          (funcall tool server context #'send-result #'send-error args)
-        (send-error emcp--jsonrpc-invalid-params (format "Unknown tool: %s" name))))))
+      (cond
+       ((not tool)
+        (send-error emcp--jsonrpc-invalid-params (format "Unknown tool: %s" name)))
+       ;; The schema requires an object, so anything else is malformed
+       ((not args)
+        (send-error emcp--jsonrpc-invalid-params "Arguments must be an object"))
+       (t
+        (funcall tool server context #'send-result #'send-error args))))))
 
 ;;; Primitive defining macros
 
