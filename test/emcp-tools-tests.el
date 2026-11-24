@@ -93,8 +93,9 @@ seconds to milliseconds while still exercising the same code paths."
         (should-not (string-match-p "(defun emcp--server-destroy" text))))))
 
 (ert-deftest emcp-tests-find-references-any ()
-  ;; "any" kind matches every occurrence regardless of syntactic position, so
-  ;; it includes the `defun' definition line that "function" skips.
+  ;; "any" kind matches every occurrence regardless of syntactic
+  ;; position, so it includes the `defun' definition line that
+  ;; "function" skips.
   (emcp-tests-with-emcp-refs-scope
     (emcp-test-with-tool-response response 'emcp-tools-find-references
                                   '((symbol . "emcp--server-destroy"))
@@ -104,10 +105,9 @@ seconds to milliseconds while still exercising the same code paths."
         (should (string-match-p "(defun emcp--server-destroy" text))))))
 
 (ert-deftest emcp-tests-find-references-max-lines ()
-  ;; emcp--server-build is called with a multi-line argument list in emcp.el,
-  ;; so the un-capped snippet spans several lines.  With the limit set to 1,
-  ;; only the first line is kept and a continuation marker is appended after
-  ;; the first line of the matched form.
+  ;; emcp--server-build is called with a multi-line argument list in
+  ;; emcp.el.  With the limit set to 1, only the first line is kept,
+  ;; followed by a `...' marker on its own line.
   (let ((emcp-tools-find-references-max-lines 1))
     (emcp-tests-with-emcp-refs-scope
       (emcp-test-with-tool-response response 'emcp-tools-find-references
@@ -119,26 +119,24 @@ seconds to milliseconds while still exercising the same code paths."
                    "(emcp--server-build :name[^\n]*\n\\.\\.\\."
                    text)))))))
 
-(ert-deftest emcp-tests-find-references-not-found ()
+(ert-deftest emcp-tests-find-references-unknown-symbol ()
+  (emcp-test-with-tool-response response 'emcp-tools-find-references
+                                '((symbol . "emcp--this-does-not-exist-at-all"))
+    (let* ((result (alist-get 'result response))
+           (text (alist-get 'text (aref (alist-get 'content result) 0))))
+      (should (eq (alist-get 'isError result) t))
+      (should (string-match-p "No symbol named" text)))))
+
+(ert-deftest emcp-tests-find-references-unreferenced ()
+  ;; An interned symbol that nothing references
+  (intern "emcp-tests--unreferenced")
   (emcp-tests-with-emcp-refs-scope
     (emcp-test-with-tool-response response 'emcp-tools-find-references
-                                  '((symbol . "emcp--this-does-not-exist-at-all"))
+                                  '((symbol . "emcp-tests--unreferenced"))
       (let* ((result (alist-get 'result response))
              (text (alist-get 'text (aref (alist-get 'content result) 0))))
-        (should (eq (alist-get 'isError result) t))
-        (should (string-match-p "No symbol named" text))))))
-
-(ert-deftest emcp-tests-find-references-no-matches ()
-  ;; A bound symbol that nothing references.
-  (let ((sym (make-symbol "emcp-tests--orphan-but-interned")))
-    (intern (symbol-name sym))
-    (emcp-tests-with-emcp-refs-scope
-      (emcp-test-with-tool-response response 'emcp-tools-find-references
-                                    `((symbol . ,(symbol-name sym)))
-        (let* ((result (alist-get 'result response))
-               (text (alist-get 'text (aref (alist-get 'content result) 0))))
-          (should-not (alist-get 'isError result))
-          (should (string-match-p "No references to" text)))))))
+        (should-not (alist-get 'isError result))
+        (should (string-match-p "No references to" text))))))
 
 (ert-deftest emcp-tests-describe-function ()
   (emcp-test-with-tool-response response 'emcp-tools-describe
@@ -147,11 +145,28 @@ seconds to milliseconds while still exercising the same code paths."
       (should (string-match-p "Release the resources of SERVER" text)))))
 
 (ert-deftest emcp-tests-describe-any ()
-  ;; emcp-log-level is both a variable and a constant
+  ;; visual-line-mode is both a function and a variable
   (emcp-test-with-tool-response response 'emcp-tools-describe
-                                '((symbol . "emcp-log-level"))
+                                '((symbol . "visual-line-mode"))
     (let ((text (alist-get 'text (aref (alist-get 'content (alist-get 'result response)) 0))))
-      (should (string-match-p "\\[variable\\]" text)))))
+      (should (string-match-p "^\\[function\\]$" text))
+      (should (string-match-p "^\\[variable\\]$" text)))))
+
+(ert-deftest emcp-tests-describe-not-found ()
+  (emcp-test-with-tool-response response 'emcp-tools-describe
+                                '((symbol . "emcp--this-does-not-exist-at-all"))
+    (let ((text (alist-get 'text (aref (alist-get 'content (alist-get 'result response)) 0))))
+      (should (string-match-p "No documentation found" text)))))
+
+(ert-deftest emcp-tests-info-search ()
+  (emcp-test-with-tool-response response 'emcp-tools-info-search
+                                '((pattern . "defun") (manual . "elisp"))
+    (let* ((content (alist-get 'content (alist-get 'result response)))
+           (first (aref content 0)))
+      (should (equal (alist-get 'type first) "resource_link"))
+      (should (string-match-p "^info://" (alist-get 'uri first))))))
+
+;;; Variables
 
 (defvar emcp-tests--var-target nil
   "Scratch variable used by the get/set-variable tool tests.")
@@ -209,20 +224,6 @@ seconds to milliseconds while still exercising the same code paths."
       (should (eq (alist-get 'isError result) t))
       ;; And the symbol must not have become bound as a side effect
       (should-not (boundp 'emcp-tests--never-defined-var)))))
-
-(ert-deftest emcp-tests-describe-not-found ()
-  (emcp-test-with-tool-response response 'emcp-tools-describe
-                                '((symbol . "emcp--this-does-not-exist-at-all"))
-    (let ((text (alist-get 'text (aref (alist-get 'content (alist-get 'result response)) 0))))
-      (should (string-match-p "No documentation found" text)))))
-
-(ert-deftest emcp-tests-info-search ()
-  (emcp-test-with-tool-response response 'emcp-tools-info-search
-                                '((pattern . "defun") (manual . "elisp"))
-    (let* ((content (alist-get 'content (alist-get 'result response)))
-           (first (aref content 0)))
-      (should (equal (alist-get 'type first) "resource_link"))
-      (should (string-match-p "^info://" (alist-get 'uri first))))))
 
 (provide 'emcp-tools-tests)
 ;;; emcp-tools-tests.el ends here

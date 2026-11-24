@@ -27,6 +27,12 @@
 (require 'emcp-test-helpers)
 (require 'ert)
 
+;;; Helpers
+
+(defun emcp-tests--error-code (response)
+  "Return the error code of RESPONSE."
+  (alist-get 'code (alist-get 'error response)))
+
 ;;; Prompts
 
 (ert-deftest emcp-tests-sync-prompt ()
@@ -40,7 +46,8 @@
         `((description . ,(format "A pretend greeting in %s" lang))
           (messages . [((role . "user")
                         (content . ((type . "text")
-                                    (text . ,(format "Hello, I am %s. Pretend this was in %s." name lang)))))]))))
+                                    (text . ,(format "Hello, I am %s. Pretend this was in %s." name lang)))))])))
+     t)
 
     (emcp-test-with-server server (emcp--server-build :prompts (list sym))
       (let ((client (emcp-test-make-client :server server)))
@@ -62,7 +69,7 @@
                                                      (arguments . ((name . "Emacs")
                                                                    (lang . "Spanish"))))))
           (should (equal (emcp-test-response-data response)
-                         `((description . ,(format "A pretend greeting in Spanish" lang))
+                         '((description . "A pretend greeting in Spanish")
                            (messages . [((role . "user")
                                          (content . ((type . "text")
                                                      (text . "Hello, I am Emacs. Pretend this was in Spanish."))))])))))))))
@@ -75,17 +82,27 @@
         `((description . ,(format "A pretend greeting in %s" lang))
           (messages . [((role . "user")
                         (content . ((type . "text")
-                                    (text . ,(format "Hello, I am %s. Pretend this was in %s." name lang)))))]))))
+                                    (text . ,(format "Hello, I am %s. Pretend this was in %s." name lang)))))])))
+     t)
 
     (emcp-test-with-server server (emcp--server-build :prompts (list sym))
       (let ((client (emcp-test-make-client :server server)))
+        (emcp-test-client-with-response client response '((method . "prompts/list"))
+          (should (equal (emcp-test-response-data response)
+                         `((prompts . [((name . ,(symbol-name sym))
+                                        (description . "A minimal prompt.")
+                                        (arguments . [((name . "name")
+                                                       (required . t))
+                                                      ((name . "lang")
+                                                       (required . t))]))])))))
+
         (emcp-test-client-with-response client response
                                         `((method . "prompts/get")
                                           (params . ((name . ,(symbol-name sym))
                                                      (arguments . ((name . "Emacs")
                                                                    (lang . "Spanish"))))))
           (should (equal (emcp-test-response-data response)
-                         `((description . ,(format "A pretend greeting in Spanish" lang))
+                         '((description . "A pretend greeting in Spanish")
                            (messages . [((role . "user")
                                          (content . ((type . "text")
                                                      (text . "Hello, I am Emacs. Pretend this was in Spanish."))))])))))))))
@@ -94,14 +111,15 @@
   (let ((sym (make-symbol "async-prompt")))
     (eval
      `(emcp-defprompt ,sym ((name) lang)
-        "A minimal prompt."
+        "An async prompt."
         :async t
         (if (equal lang "English")
             (send-error 1000 "Cannot speak language" `((language . ,lang)))
           (send-result `((description . ,(format "A pretend greeting in %s" lang))
                          (messages . [((role . "user")
                                        (content . ((type . "text")
-                                                   (text . ,(format "Hello, I am %s. Pretend this was in %s." name lang)))))]))))))
+                                                   (text . ,(format "Hello, I am %s. Pretend this was in %s." name lang)))))])))))
+     t)
 
     (emcp-test-with-server server (emcp--server-build :prompts (list sym))
       (let ((client (emcp-test-make-client :server server)))
@@ -111,7 +129,7 @@
                                                      (arguments . ((name . "Emacs")
                                                                    (lang . "Spanish"))))))
           (should (equal (emcp-test-response-data response)
-                         `((description . ,(format "A pretend greeting in Spanish" lang))
+                         '((description . "A pretend greeting in Spanish")
                            (messages . [((role . "user")
                                          (content . ((type . "text")
                                                      (text . "Hello, I am Emacs. Pretend this was in Spanish."))))])))))
@@ -139,7 +157,8 @@
         :title "Add things"
         :description "Somebody is performing addition"
         `((content . [((type . "text")
-                       (text . ,(format "%s says %s" name (+ a b))))]))))
+                       (text . ,(format "%s says %s" name (+ a b))))])))
+     t)
 
     (emcp-test-with-server server (emcp--server-build :tools (list sym))
       (let ((client (emcp-test-make-client :server server)))
@@ -170,7 +189,8 @@
      `(emcp-deftool ,sym (name (a :type "number") (b :type "number"))
         "An addition tool."
         `((content . [((type . "text")
-                       (text . ,(format "%s says %s" name (+ a b))))]))))
+                       (text . ,(format "%s says %s" name (+ a b))))])))
+     t)
 
     (emcp-test-with-server server (emcp--server-build :tools (list sym))
       (let ((client (emcp-test-make-client :server server)))
@@ -193,7 +213,8 @@
         (if (equal name "Emacs")
             (send-result `((content . [((type . "text")
                                         (text . ,(format "%s says %s" name (+ a b))))])))
-          (send-error 1001 "Addition is hard" `((name . ,name))))))
+          (send-error 1001 "Addition is hard" `((name . ,name)))))
+     t)
 
     (emcp-test-with-server server (emcp--server-build :tools (list sym))
       (let ((client (emcp-test-make-client :server server)))
@@ -218,6 +239,24 @@
                            (message . "Addition is hard")
                            (data . ((name . "Gnu")))))))))))
 
+(ert-deftest emcp-tests-tools-list-order ()
+  ;; tools/list follows the profile order, on every call and after a
+  ;; reload.
+  (let ((syms (mapcar #'make-symbol '("zeta" "alpha" "mid"))))
+    (dolist (sym syms)
+      (eval `(emcp-deftool ,sym () "A tool." '((content . []))) t))
+    (cl-flet ((names (client)
+                (mapcar (lambda (tool) (alist-get 'name tool))
+                        (alist-get 'tools (emcp-test-response-data
+                                           (emcp-test-client-request
+                                            client "tools/list"))))))
+      (emcp-test-with-server server (emcp--server-build :tools syms)
+        (let ((client (emcp-test-make-client :server server)))
+          (should (equal (names client) '("zeta" "alpha" "mid")))
+          (should (equal (names client) '("zeta" "alpha" "mid")))
+          (emcp--server-reload server :tools (reverse syms))
+          (should (equal (names client) '("mid" "alpha" "zeta"))))))))
+
 ;;; Resources
 
 (ert-deftest emcp-tests-static-resource ()
@@ -228,7 +267,8 @@
         :name "greeting"
         `((contents . [((uri . ,uri)
                         (mimeType . "text/plain")
-                        (text . "Hello from EMCP"))]))))
+                        (text . "Hello from EMCP"))])))
+     t)
 
     (emcp-test-with-server server (emcp--server-build :resources (list sym))
       (let ((client (emcp-test-make-client :server server)))
@@ -253,7 +293,7 @@
                  (text (alist-get 'text (aref contents 0))))
             (should (equal text "Hello from EMCP"))))))))
 
-(ert-deftest emcp-tests-async-resource ()
+(ert-deftest emcp-tests-async-resource-template ()
   (let ((sym (make-symbol "async-resource")))
     (eval
      `(emcp-defresource ,sym "emcp://test/{name}"
@@ -264,7 +304,8 @@
             (send-error -1 "No greeting for you")
           (send-result `((contents . [((uri . ,uri)
                                        (mimeType . "text/plain")
-                                       (text . ,(format "Hello, %s" name)))]))))))
+                                       (text . ,(format "Hello, %s" name)))])))))
+     t)
 
     (emcp-test-with-server server (emcp--server-build :resources (list sym))
       (let ((client (emcp-test-make-client :server server)))
@@ -283,6 +324,30 @@
           (should (alist-get 'error response))
           (should (equal (alist-get 'message (alist-get 'error response))
                          "No greeting for you")))))))
+
+(ert-deftest emcp-tests-resource-read-errors ()
+  ;; A URI that no resource matches and a body that signals
+  ;; `emcp-resource-not-found' return invalid params, any other error
+  ;; that a body signals returns an internal error.
+  (let ((missing (make-symbol "missing"))
+        (broken (make-symbol "broken")))
+    (eval `(progn
+             (emcp-defresource ,missing "emcp://test/missing" "A missing resource."
+                               (signal 'emcp-resource-not-found nil))
+             (emcp-defresource ,broken "emcp://test/broken" "A broken resource."
+                               (error "Broken")))
+          t)
+    (emcp-test-with-server server (emcp--server-build :resources (list missing broken))
+      (let ((client (emcp-test-make-client :server server)))
+        (pcase-dolist (`(,uri ,code)
+                       `(("emcp://test/unknown" ,emcp--jsonrpc-invalid-params)
+                         ("emcp://test/missing" ,emcp--jsonrpc-invalid-params)
+                         ("emcp://test/broken" ,emcp--jsonrpc-internal-error)))
+          (ert-info (uri)
+            (should (= (emcp-tests--error-code
+                        (emcp-test-client-request
+                         client "resources/read" `((uri . ,uri))))
+                       code))))))))
 
 ;;; Request context
 
@@ -355,10 +420,6 @@
         (should (string-match-p "^[^ ]+ [^ ]+ INFO  short      > Request tools/list" log))))))
 
 ;;; Request validation
-
-(defun emcp-tests--error-code (response)
-  "Return the error code of RESPONSE."
-  (alist-get 'code (alist-get 'error response)))
 
 (defun emcp-tests--tools-list-request-context (server &rest meta-args)
   "Return the context of a tools/list request to SERVER.
@@ -495,48 +556,6 @@ META-ARGS override or omit _meta fields, see `emcp-test-make-request-meta'."
       (should (equal (alist-get 'name info) "EMCP"))
       (should (string-prefix-p "data:image/svg+xml;base64,"
                                (alist-get 'src (aref (alist-get 'icons info) 0)))))))
-
-(ert-deftest emcp-tests-tools-list-order ()
-  ;; tools/list follows the profile order, on every call and after a
-  ;; reload.
-  (let ((syms (mapcar #'make-symbol '("zeta" "alpha" "mid"))))
-    (dolist (sym syms)
-      (eval `(emcp-deftool ,sym () "A tool." '((content . []))) t))
-    (cl-flet ((names (client)
-                (mapcar (lambda (tool) (alist-get 'name tool))
-                        (alist-get 'tools (emcp-test-response-data
-                                           (emcp-test-client-request
-                                            client "tools/list"))))))
-      (emcp-test-with-server server (emcp--server-build :tools syms)
-        (let ((client (emcp-test-make-client :server server)))
-          (should (equal (names client) '("zeta" "alpha" "mid")))
-          (should (equal (names client) '("zeta" "alpha" "mid")))
-          (emcp--server-reload server :tools (reverse syms))
-          (should (equal (names client) '("mid" "alpha" "zeta"))))))))
-
-(ert-deftest emcp-tests-resource-read-errors ()
-  ;; A URI that no resource matches and a body that signals
-  ;; `emcp-resource-not-found' return invalid params, any other error
-  ;; that a body signals returns an internal error.
-  (let ((missing (make-symbol "missing"))
-        (broken (make-symbol "broken")))
-    (eval `(progn
-             (emcp-defresource ,missing "emcp://test/missing" "A missing resource."
-                               (signal 'emcp-resource-not-found nil))
-             (emcp-defresource ,broken "emcp://test/broken" "A broken resource."
-                               (error "Broken")))
-          t)
-    (emcp-test-with-server server (emcp--server-build :resources (list missing broken))
-      (let ((client (emcp-test-make-client :server server)))
-        (pcase-dolist (`(,uri ,code)
-                       `(("emcp://test/unknown" ,emcp--jsonrpc-invalid-params)
-                         ("emcp://test/missing" ,emcp--jsonrpc-invalid-params)
-                         ("emcp://test/broken" ,emcp--jsonrpc-internal-error)))
-          (ert-info (uri)
-            (should (= (emcp-tests--error-code
-                        (emcp-test-client-request
-                         client "resources/read" `((uri . ,uri))))
-                       code))))))))
 
 (provide 'emcp-core-tests)
 ;;; emcp-core-tests.el ends here

@@ -27,6 +27,8 @@
 (require 'emcp-tools-send-keys)
 (require 'ert)
 
+;;; Authorization
+
 (ert-deftest emcp-tests-send-keys-authorize-mode-accept ()
   ;; Server mode `accept' overrides a default-reject policy.
   (emcp-test-with-server server (emcp--server-build)
@@ -62,6 +64,8 @@
       (should (eq (emcp-tools-send-keys--authorize server) t))
       (should (eq (emcp-tools-send-keys--apply-action 'mode-reject server) nil))
       (should (eq (emcp-tools-send-keys--authorize server) nil)))))
+
+;;; The tool
 
 (ert-deftest emcp-tests-send-keys-tool-default-accept ()
   ;; Self-insert keys land in the buffer of the selected window at call time.

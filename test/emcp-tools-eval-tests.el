@@ -27,6 +27,8 @@
 (require 'emcp-tools-eval)
 (require 'ert)
 
+;;; Parsing
+
 (ert-deftest emcp-tests-eval-parse-single-form ()
   (should (equal (emcp-tools-eval--parse "(+ 1 2)")
                  '(+ 1 2))))
@@ -43,6 +45,8 @@
 (ert-deftest emcp-tests-eval-parse-empty ()
   (should-error (emcp-tools-eval--parse "   \n  ")
                 :type 'emcp-tools-eval-parse-error))
+
+;;; Authorization
 
 (ert-deftest emcp-tests-eval-authorize-mode-accept ()
   ;; Server mode `accept' overrides a default-reject policy.
@@ -79,6 +83,8 @@
       (should (eq (emcp-tools-eval--authorize server) t))
       (should (eq (emcp-tools-eval--apply-action 'mode-reject server) nil))
       (should (eq (emcp-tools-eval--authorize server) nil)))))
+
+;;; The tool
 
 (ert-deftest emcp-tests-eval-tool-default-accept ()
   (let ((emcp-tools-eval-default-policy t))
@@ -120,7 +126,7 @@
       (let* ((result (alist-get 'result response))
              (text (alist-get 'text (aref (alist-get 'content result) 0))))
         (should (eq (alist-get 'isError result) t))
-        (should (string-match-p "Unbalanced\\|incomplete" text))))))
+        (should (string-search "Unbalanced or incomplete input" text))))))
 
 (ert-deftest emcp-tests-eval-tool-runtime-error ()
   (let ((emcp-tools-eval-default-policy t))

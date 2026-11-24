@@ -40,20 +40,8 @@
          (progn ,@body)
        (emcp--server-destroy ,server))))
 
-(defmacro emcp-test-with-http-server (server form &rest body)
-  "Bind SERVER to FORM, start its HTTP transport, execute BODY, then stop both.
-
-The transport listens on a random port."
-  (declare (indent 2) (debug (symbolp sexp body)))
-  `(emcp-test-with-server ,server ,form
-     (let ((emcp-http-port t))
-       (emcp-http--start-transport ,server))
-     (unwind-protect
-         (progn ,@body)
-       (emcp-http--stop-transport ,server))))
-
 (defun emcp-test-to-hash-table (object)
-  "Convert a JSON OBJECT to hash-table presentation."
+  "Convert the alist OBJECT to its JSON hash-table representation."
   (json-parse-string (json-serialize object)))
 
 (defmacro emcp-test-wait-for (form &optional timeout)
@@ -114,6 +102,15 @@ them out.  OMIT is a list of keywords among :protocol-version,
              unless (memq keyword omit)
              collect (cons key value))))
 
+(defun emcp-test-make-request (method &optional params &rest meta-args)
+  "Build a JSON-RPC request for METHOD with PARAMS and a valid _meta.
+
+META-ARGS override or omit _meta fields, see `emcp-test-make-request-meta'."
+  `((jsonrpc . "2.0")
+    (id . 1)
+    (method . ,method)
+    (params . ((_meta . ,(apply #'emcp-test-make-request-meta meta-args)) ,@params))))
+
 (defun emcp-test-client-send-request (client request callback &rest meta-args)
   "Send REQUEST through CLIENT, calling CALLBACK with the response.
 
@@ -135,27 +132,12 @@ The clientInfo defaults to the one of CLIENT."
 (defmacro emcp-test-client-with-response (client response request &rest body)
   "Send REQUEST through CLIENT and bind RESPONSE in BODY.
 
-BODY can optionally start with the following keyword arguments:
-  :timeout  Seconds to wait for the response (default 1).
-  :wait     Whether to wait for the response (default t)."
+Wait for the response before executing BODY."
   (declare (indent 3))
-  (let ((timeout 1)
-        (wait t))
-    (while (keywordp (car body))
-      (pcase (pop body)
-        (:timeout (setq timeout (pop body)))
-        (:wait (setq wait (pop body)))))
-    (let ((done (gensym "done")))
-      `(let ((,done nil))
-         (emcp-test-client-send-request
-          ,client ,request
-          (lambda (,response)
-            ,@body
-            (setq ,done t)))
-         ,@(when wait
-             `((with-timeout (,timeout (error "Request timed out after %s seconds" ,timeout))
-                 (while (not ,done)
-                   (accept-process-output nil 0.01)))))))))
+  `(let (,response)
+     (emcp-test-client-send-request ,client ,request (lambda (r) (setq ,response r)))
+     (emcp-test-wait-for ,response)
+     ,@body))
 
 (defun emcp-test-response-data (response)
   "Return the result of RESPONSE without the MCP metadata fields.
@@ -200,6 +182,18 @@ the full JSON-RPC response."
 
 ;;; Raw HTTP client
 
+(defmacro emcp-test-with-http-server (server form &rest body)
+  "Bind SERVER to FORM, start its HTTP transport, execute BODY, then stop both.
+
+The transport listens on a random port."
+  (declare (indent 2) (debug (symbolp sexp body)))
+  `(emcp-test-with-server ,server ,form
+     (let ((emcp-http-port t))
+       (emcp-http--start-transport ,server))
+     (unwind-protect
+         (progn ,@body)
+       (emcp-http--stop-transport ,server))))
+
 (defmacro emcp-test-with-http-connection (conn server &rest body)
   "Bind CONN to a raw TCP connection to the HTTP transport of SERVER.
 
@@ -224,17 +218,8 @@ request."
                           :sentinel #'ignore))
              (process-put ,conn :emcp-test-server ,srv)
              ,@body)
-         (when ,conn (emcp-test-http-disconnect ,conn))
+         (when ,conn (delete-process ,conn))
          (kill-buffer ,buffer)))))
-
-(defun emcp-test-make-request (method &optional params &rest meta-args)
-  "Build a JSON-RPC request for METHOD with PARAMS and a valid _meta.
-
-META-ARGS override or omit _meta fields, see `emcp-test-make-request-meta'."
-  `((jsonrpc . "2.0")
-    (id . 1)
-    (method . ,method)
-    (params . ((_meta . ,(apply #'emcp-test-make-request-meta meta-args)) ,@params))))
 
 (defun emcp-test-http-encode-header-value (value)
   "Encode VALUE for an Mcp-Name header, using the base64 sentinel if needed."
@@ -403,10 +388,6 @@ at most TIMEOUT seconds for the event."
               (accept-process-output conn 0.01))))
         (process-put conn :emcp-test-sse pending)
         (and event (emcp-test-http--parse-event event))))))
-
-(defun emcp-test-http-disconnect (conn)
-  "Close the client side of CONN."
-  (delete-process conn))
 
 (provide 'emcp-test-helpers)
 ;;; emcp-test-helpers.el ends here

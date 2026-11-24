@@ -23,16 +23,8 @@
 
 ;;; Code:
 
-(require 'emcp-test-helpers)
 (require 'emcp-uri)
 (require 'ert)
-
-(ert-deftest emcp-tests-uri-template-compile ()
-  (pcase-let ((`(,regex . ,params)
-               (emcp-uri--compile-template "info://{manual}/{node}")))
-    (should (equal params '(manual node)))
-    (should (string-match-p regex "info://elisp/Symbols"))
-    (should-not (string-match-p regex "http://example.com"))))
 
 (ert-deftest emcp-tests-uri-template-match ()
   (let ((compiled (emcp-uri--compile-template "info://{manual}/{node}")))

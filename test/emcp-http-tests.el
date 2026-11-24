@@ -36,46 +36,27 @@
   (cdr (assoc-string name (plist-get response :headers) t)))
 
 (defmacro emcp-tests-with-http-response (response message &rest body)
-  "Send MESSAGE to a test server over HTTP and bind RESPONSE in BODY.
+  "POST MESSAGE to a test server over HTTP and bind RESPONSE in BODY.
 
 The server has the primitives in `emcp-test-primitives'.  BODY may start
-with keyword arguments for `emcp-test-http-request', of which :method
-defaults to POST."
+with keyword arguments for `emcp-test-http-request'."
   (declare (indent 2))
-  (let (args (method ''POST))
+  (let (args)
     (while (keywordp (car body))
-      (let ((key (pop body)) (value (pop body)))
-        (if (eq key :method) (setq method value) (setq args `(,@args ,key ,value)))))
+      (setq args `(,@args ,(pop body) ,(pop body))))
     (let ((server (gensym "server"))
           (conn (gensym "conn")))
       `(emcp-test-with-http-server ,server (apply #'emcp--server-build emcp-test-primitives)
          (emcp-test-with-http-connection ,conn ,server
-           (let ((,response (emcp-test-http-request ,conn ,method ,message ,@args)))
+           (let ((,response (emcp-test-http-request ,conn 'POST ,message ,@args)))
              ,@body))))))
+
+;;; Request routing
 
 (ert-deftest emcp-tests-http-wrong-path ()
   (emcp-tests-with-http-response response (emcp-test-make-request "tools/list")
     :path "/not-mcp"
     (should (= (plist-get response :status) 404))))
-
-(ert-deftest emcp-tests-http-unparseable-json ()
-  (emcp-tests-with-http-response response "{\"jsonrpc\": 2.0, oops}"
-    (should (= (plist-get response :status) 400))
-    (should (= (alist-get 'code
-                          (alist-get 'error (emcp-tests--parse-http-response-body response)))
-               emcp--jsonrpc-parse-error))))
-
-(ert-deftest emcp-tests-http-valid-request ()
-  ;; A valid request is answered with JSON.  A legacy Mcp-Session-Id
-  ;; is ignored and no session id is minted.
-  (emcp-tests-with-http-response response (emcp-test-make-request "tools/list")
-    :headers '(("Mcp-Session-Id" . "legacy-session"))
-    (should (= (plist-get response :status) 200))
-    (should (equal (emcp-tests--http-header response "Content-Type") "application/json"))
-    (should-not (emcp-tests--http-header response "Mcp-Session-Id"))
-    (let ((json (emcp-tests--parse-http-response-body response)))
-      (should (= (alist-get 'id json) 1))
-      (should (equal (alist-get 'resultType (alist-get 'result json)) "complete")))))
 
 (ert-deftest emcp-tests-http-origin-allowed ()
   (emcp-test-with-http-server server (emcp--server-build)
@@ -105,9 +86,67 @@ defaults to POST."
               (should (= (alist-get 'code (alist-get 'error json))
                          emcp--jsonrpc-invalid-request)))))))))
 
-(ert-deftest emcp-tests-http-header-validation ()
-  ;; Each protocol header is required and must match the body, otherwise the request is
-  ;; rejected with 400 and HeaderMismatch.
+(ert-deftest emcp-tests-http-method-not-allowed ()
+  (emcp-test-with-http-server server (emcp--server-build)
+    (dolist (method '(GET DELETE))
+      (ert-info ((symbol-name method))
+        (emcp-test-with-http-connection conn server
+          (let ((response (emcp-test-http-request conn method nil)))
+            (should (= (plist-get response :status) 405))
+            (should (equal (emcp-tests--http-header response "Allow") "POST"))))))))
+
+;;; Message parsing
+
+(ert-deftest emcp-tests-http-unparseable-json ()
+  (emcp-tests-with-http-response response "{\"jsonrpc\": 2.0, oops}"
+    (should (= (plist-get response :status) 400))
+    (should (= (alist-get 'code
+                          (alist-get 'error (emcp-tests--parse-http-response-body response)))
+               emcp--jsonrpc-parse-error))))
+
+(ert-deftest emcp-tests-http-response-from-client ()
+  (emcp-tests-with-http-response response '((jsonrpc . "2.0") (id . 1) (result . ((a . 1))))
+    (should (= (plist-get response :status) 400))
+    (should (= (alist-get 'code
+                          (alist-get 'error (emcp-tests--parse-http-response-body response)))
+               emcp--jsonrpc-invalid-request))))
+
+(ert-deftest emcp-tests-http-notification ()
+  ;; Notifications are accepted with 202 and no body
+  (emcp-tests-with-http-response response
+      '((jsonrpc . "2.0") (method . "notifications/cancelled") (params . ((requestId . 1))))
+    (should (= (plist-get response :status) 202))
+    (should (equal (plist-get response :body) ""))))
+
+;;; Legacy clients
+
+(ert-deftest emcp-tests-http-legacy-initialize ()
+  ;; A legacy client sends initialize without the new headers and learns the supported
+  ;; version from the error.
+  (emcp-tests-with-http-response response
+      '((jsonrpc . "2.0") (id . 1) (method . "initialize")
+        (params . ((protocolVersion . "2025-11-25") (capabilities . ()))))
+    :omit-headers '("MCP-Protocol-Version" "Mcp-Method")
+    (let ((error (alist-get 'error (emcp-tests--parse-http-response-body response))))
+      (should (= (plist-get response :status) 400))
+      (should (= (alist-get 'code error) emcp--mcp-unsupported-protocol-version))
+      (should (equal (alist-get 'supported (alist-get 'data error)) ["2026-07-28"]))
+      (should (equal (alist-get 'requested (alist-get 'data error)) "2025-11-25")))))
+
+(ert-deftest emcp-tests-http-legacy-session-id ()
+  ;; The session id of earlier revisions is ignored and not echoed, see the backward
+  ;; compatibility section of the Streamable HTTP spec.
+  (emcp-tests-with-http-response response (emcp-test-make-request "tools/list")
+    :headers '(("Mcp-Session-Id" . "legacy-session"))
+    (should (= (plist-get response :status) 200))
+    (should-not (emcp-tests--http-header response "Mcp-Session-Id"))))
+
+;;; Mirrored headers
+
+(ert-deftest emcp-tests-http-mirrored-headers-rejected ()
+  ;; MCP-Protocol-Version and Mcp-Method are always required, Mcp-Name only for
+  ;; tools/call, prompts/get and resources/read.  Each must match the body, otherwise the
+  ;; request is rejected with 400 and HeaderMismatch.
   (let ((call (emcp-test-make-request "tools/call" '((name . "tool"))))
         (get (emcp-test-make-request "prompts/get" '((name . "prompt"))))
         (read (emcp-test-make-request "resources/read" '((uri . "emcp://test/static")))))
@@ -142,7 +181,7 @@ defaults to POST."
               :name "grüße"
               '((content . [((type . "text") (text . "hallo"))])))
 
-(ert-deftest emcp-tests-http-mcp-name-header ()
+(ert-deftest emcp-tests-http-mirrored-headers-accepted ()
   ;; Mcp-Name is only required for tools/call, prompts/get and resources/read, and the
   ;; base64 sentinel is decoded before the comparison.
   (emcp-test-with-http-server server (emcp--server-build
@@ -171,6 +210,16 @@ defaults to POST."
             (should (= (plist-get response :status) 200))
             (should (alist-get 'result (emcp-tests--parse-http-response-body response)))))))))
 
+;;; Request handling
+
+(ert-deftest emcp-tests-http-valid-request ()
+  (emcp-tests-with-http-response response (emcp-test-make-request "tools/list")
+    (should (= (plist-get response :status) 200))
+    (should (equal (emcp-tests--http-header response "Content-Type") "application/json"))
+    (let ((json (emcp-tests--parse-http-response-body response)))
+      (should (= (alist-get 'id json) 1))
+      (should (equal (alist-get 'resultType (alist-get 'result json)) "complete")))))
+
 (ert-deftest emcp-tests-http-unsupported-version ()
   (emcp-tests-with-http-response response
       (emcp-test-make-request "tools/list" nil :protocol-version "2025-11-25")
@@ -187,44 +236,12 @@ defaults to POST."
                           (alist-get 'error (emcp-tests--parse-http-response-body response)))
                emcp--jsonrpc-invalid-params))))
 
-(ert-deftest emcp-tests-http-legacy-initialize ()
-  ;; A legacy client sends initialize without the new headers and learns the supported
-  ;; version from the error.
-  (emcp-tests-with-http-response response
-      '((jsonrpc . "2.0") (id . 1) (method . "initialize")
-        (params . ((protocolVersion . "2025-11-25") (capabilities . ()))))
-    :omit-headers '("MCP-Protocol-Version" "Mcp-Method")
-    (let ((error (alist-get 'error (emcp-tests--parse-http-response-body response))))
-      (should (= (plist-get response :status) 400))
-      (should (= (alist-get 'code error) emcp--mcp-unsupported-protocol-version))
-      (should (string-search "2026-07-28" (alist-get 'message error)))
-      (should (equal (alist-get 'requested (alist-get 'data error)) "2025-11-25")))))
-
 (ert-deftest emcp-tests-http-unknown-method ()
   (emcp-tests-with-http-response response (emcp-test-make-request "tools/unknown")
     (should (= (plist-get response :status) 404))
     (should (= (alist-get 'code
                           (alist-get 'error (emcp-tests--parse-http-response-body response)))
                emcp--jsonrpc-method-not-found))))
-
-(ert-deftest emcp-tests-http-notification ()
-  (emcp-tests-with-http-response response
-      '((jsonrpc . "2.0") (method . "notifications/initialized"))
-    (should (= (plist-get response :status) 202))))
-
-(ert-deftest emcp-tests-http-response-from-client ()
-  (emcp-tests-with-http-response response '((jsonrpc . "2.0") (id . 1) (result . ((a . 1))))
-    (should (= (plist-get response :status) 400))
-    (should (= (alist-get 'code
-                          (alist-get 'error (emcp-tests--parse-http-response-body response)))
-               emcp--jsonrpc-invalid-request))))
-
-(ert-deftest emcp-tests-http-get-and-delete ()
-  (emcp-test-with-http-server server (emcp--server-build)
-    (dolist (method '(GET DELETE))
-      (ert-info ((symbol-name method))
-        (emcp-test-with-http-connection conn server
-          (should (= (plist-get (emcp-test-http-request conn method nil) :status) 405)))))))
 
 (provide 'emcp-http-tests)
 ;;; emcp-http-tests.el ends here
