@@ -419,6 +419,44 @@
         (should (string-match-p "^[^ ]+ [^ ]+ INFO  a-very-lon > Request tools/list" log))
         (should (string-match-p "^[^ ]+ [^ ]+ INFO  short      > Request tools/list" log))))))
 
+;;; Subscriptions
+
+(defun emcp-tests--subscribe (server id notifications)
+  "Subscribe to NOTIFICATIONS on SERVER with a subscriptions/listen request ID.
+
+Return a function that returns the messages sent on the subscription so
+far."
+  (let* ((request (emcp-test-to-hash-table (emcp-test-make-listen-request id notifications)))
+         (messages nil)
+         (subscription (emcp--server-subscribe
+                        server (emcp--request-context server request) request
+                        (emcp--subscription-requested-notifications request)
+                        (lambda (message &optional _final) (push message messages)))))
+    (emcp--server-acknowledge-subscription server subscription)
+    (lambda () (reverse messages))))
+
+(defun emcp-tests--list-changed (method id)
+  "Build the list-changed notification METHOD for the subscription ID."
+  `((jsonrpc . "2.0")
+    (method . ,method)
+    (params . ((_meta . ((io.modelcontextprotocol/subscriptionId . ,id)))))))
+
+(ert-deftest emcp-tests-reload-notifies-subscriptions ()
+  ;; Each subscription receives only the list changes it asked for,
+  ;; tagged with its subscription id, after its acknowledgment.
+  (emcp-test-with-server server (apply #'emcp--server-build emcp-test-primitives)
+    (let ((tools (emcp-tests--subscribe server 1 '((toolsListChanged . t))))
+          (others (emcp-tests--subscribe server "other" '((toolsListChanged . :false)
+                                                          (promptsListChanged . t)
+                                                          (resourcesListChanged . t)))))
+      (apply #'emcp--server-reload server emcp-test-primitives)
+      (should (equal (cdr (funcall tools))
+                     (list (emcp-tests--list-changed "notifications/tools/list_changed" 1))))
+      (should (equal (cdr (funcall others))
+                     (list (emcp-tests--list-changed "notifications/prompts/list_changed" "other")
+                           (emcp-tests--list-changed "notifications/resources/list_changed"
+                                                     "other")))))))
+
 ;;; Request validation
 
 (defun emcp-tests--tools-list-request-context (server &rest meta-args)
@@ -549,9 +587,9 @@ META-ARGS override or omit _meta fields, see `emcp-test-make-request-meta'."
            (capabilities (alist-get 'capabilities result))
            (info (alist-get 'io.modelcontextprotocol/serverInfo (alist-get '_meta result))))
       (should (equal (alist-get 'supportedVersions result) ["2026-07-28"]))
-      (should (assq 'tools capabilities))
-      (should (assq 'prompts capabilities))
-      (should (assq 'resources capabilities))
+      ;; List changes are announced via subscriptions/listen
+      (dolist (primitive '(tools prompts resources))
+        (should (eq (alist-get 'listChanged (alist-get primitive capabilities)) t)))
       (should (equal (alist-get 'instructions result) "Test instructions"))
       (should (equal (alist-get 'name info) "EMCP"))
       (should (string-prefix-p "data:image/svg+xml;base64,"

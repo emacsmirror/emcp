@@ -887,6 +887,19 @@ Default: ~nil~
 
 Default: ~"127.0.0.1"~
 
+** [[./emcp-http.el::50][~emcp-http-keep-alive-interval~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-http-keep-alive-interval
+:END:
+
+: Seconds between keep-alive comments on open SSE streams.
+:
+: Keep-alives stop clients and proxies from closing idle streams.  They
+: are also how EMCP notices that a client has closed a stream, because a
+: closed connection only becomes apparent when sending.
+
+Default: ~5~
+
 ** [[./emcp-http.el::45][~emcp-http-path~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-http-path
@@ -926,11 +939,13 @@ Default: ~"Inspect and control the user's running Emacs.\n\nUse this when you ar
 : Milliseconds for which clients may cache lists and server/discover results.
 :
 : This is the cache hint for the results of tools/list, prompts/list,
-: resources/list, resources/templates/list and server/discover.
+: resources/list, resources/templates/list and server/discover.  Clients
+: that subscribe to list changes refetch lists after ‘emcp-reload’ anyway,
+: so the hint can be long.
 
-Default: ~60000~
+Default: ~300000~
 
-** [[./emcp-core.el::82][~emcp-log-level~]]
+** [[./emcp-core.el::84][~emcp-log-level~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-log-level
 :END:

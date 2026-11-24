@@ -243,5 +243,102 @@ with keyword arguments for `emcp-test-http-request'."
                           (alist-get 'error (emcp-tests--parse-http-response-body response)))
                emcp--jsonrpc-method-not-found))))
 
+;;; Subscriptions
+
+(defun emcp-tests--http-listen (conn id notifications)
+  "Open a subscription with request ID for the filter NOTIFICATIONS on CONN.
+
+Return the acknowledgment."
+  (let ((response (emcp-test-http-request
+                   conn 'POST (emcp-test-make-listen-request id notifications))))
+    (should (= (plist-get response :status) 200))
+    (emcp-test-http-read-event conn)))
+
+(defun emcp-tests--http-subscription-id (message)
+  "Return the subscription id in the _meta of the notification or response MESSAGE."
+  (alist-get 'io.modelcontextprotocol/subscriptionId
+             (alist-get '_meta (or (alist-get 'params message) (alist-get 'result message)))))
+
+(ert-deftest emcp-tests-http-listen-acknowledged ()
+  ;; The stream starts with an acknowledgment of the notification
+  ;; types that the client requested and EMCP can send; EMCP does not
+  ;; support resource subscriptions.
+  (emcp-test-with-http-server server (apply #'emcp--server-build emcp-test-primitives)
+    (emcp-test-with-http-connection conn server
+      (let ((response (emcp-test-http-request
+                       conn 'POST (emcp-test-make-listen-request
+                                   7 '((toolsListChanged . t)
+                                       (promptsListChanged . :false)
+                                       (resourceSubscriptions . ["emcp://test/static"]))))))
+        (should (= (plist-get response :status) 200))
+        (should (equal (emcp-tests--http-header response "Content-Type") "text/event-stream"))
+        (should (equal (emcp-tests--http-header response "X-Accel-Buffering") "no"))
+        (let ((ack (emcp-test-http-read-event conn)))
+          (should (equal (alist-get 'method ack) "notifications/subscriptions/acknowledged"))
+          (should (= (emcp-tests--http-subscription-id ack) 7))
+          (should (equal (alist-get 'notifications (alist-get 'params ack))
+                         '((toolsListChanged . t)))))))))
+
+(ert-deftest emcp-tests-http-listen-missing-filter ()
+  ;; Answered like invalid params in other requests, not as a stream
+  (emcp-tests-with-http-response response (emcp-test-make-request "subscriptions/listen")
+    (should (= (plist-get response :status) 200))
+    (should (equal (emcp-tests--http-header response "Content-Type") "application/json"))
+    (should (= (alist-get 'code
+                          (alist-get 'error (emcp-tests--parse-http-response-body response)))
+               emcp--jsonrpc-invalid-params))))
+
+(ert-deftest emcp-tests-http-listen-list-changed ()
+  ;; Each stream receives the list changes it asked for.
+  (emcp-test-with-http-server server (apply #'emcp--server-build emcp-test-primitives)
+    (emcp-test-with-http-connection tools server
+      (emcp-test-with-http-connection others server
+        (emcp-tests--http-listen tools 1 '((toolsListChanged . t)))
+        (emcp-tests--http-listen others 2 '((promptsListChanged . t)
+                                            (resourcesListChanged . t)))
+        (apply #'emcp--server-reload server emcp-test-primitives)
+        (pcase-dolist (`(,conn ,id ,methods)
+                       `((,tools 1 ("notifications/tools/list_changed"))
+                         (,others 2 ("notifications/prompts/list_changed"
+                                     "notifications/resources/list_changed"))))
+          (ert-info ((format "Subscription %s" id))
+            (dolist (method methods)
+              (let ((notification (emcp-test-http-read-event conn)))
+                (should (equal (alist-get 'method notification) method))
+                (should (= (emcp-tests--http-subscription-id notification) id))))))))))
+
+(ert-deftest emcp-tests-http-listen-keep-alive ()
+  "Idle streams receive keep-alive comments, so that clients and proxies keep them open."
+  (let ((emcp-http-keep-alive-interval 0.05))
+    (emcp-test-with-http-server server (emcp--server-build)
+      (emcp-test-with-http-connection conn server
+        (emcp-tests--http-listen conn 1 '((toolsListChanged . t)))
+        (should (eq (emcp-test-http-read-event conn) :comment))))))
+
+(ert-deftest emcp-tests-http-listen-client-disconnect ()
+  "A subscription is removed after its client disconnects.
+
+EMCP only notices the disconnect when the next keep-alive fails."
+  (let ((emcp-http-keep-alive-interval 0.05))
+    (emcp-test-with-http-server server (emcp--server-build)
+      (emcp-test-with-http-connection conn server
+        (emcp-tests--http-listen conn 1 '((toolsListChanged . t)))
+        (should (emcp--server-subscriptions server))
+        (delete-process conn)
+        (emcp-test-wait-for (null (emcp--server-subscriptions server)))))))
+
+(ert-deftest emcp-tests-http-listen-graceful-closure ()
+  ;; Stopping the transport answers the listen request with a complete
+  ;; result, which ends the stream.
+  (emcp-test-with-http-server server (emcp--server-build)
+    (emcp-test-with-http-connection conn server
+      (emcp-tests--http-listen conn 3 '((toolsListChanged . t)))
+      (emcp-http--stop-transport server)
+      (let ((response (emcp-test-http-read-event conn)))
+        (should (= (alist-get 'id response) 3))
+        (should (equal (alist-get 'resultType (alist-get 'result response)) "complete"))
+        (should (= (emcp-tests--http-subscription-id response) 3)))
+      (should-not (emcp-test-http-read-event conn)))))
+
 (provide 'emcp-http-tests)
 ;;; emcp-http-tests.el ends here

@@ -105,11 +105,21 @@ them out.  OMIT is a list of keywords among :protocol-version,
 (defun emcp-test-make-request (method &optional params &rest meta-args)
   "Build a JSON-RPC request for METHOD with PARAMS and a valid _meta.
 
-META-ARGS override or omit _meta fields, see `emcp-test-make-request-meta'."
-  `((jsonrpc . "2.0")
-    (id . 1)
-    (method . ,method)
-    (params . ((_meta . ,(apply #'emcp-test-make-request-meta meta-args)) ,@params))))
+META-ARGS override or omit _meta fields, see
+`emcp-test-make-request-meta'."
+  (list (cons 'jsonrpc "2.0")
+        (cons 'id 1)
+        (cons 'method method)
+        (cons 'params `((_meta . ,(apply #'emcp-test-make-request-meta meta-args)) ,@params))))
+
+(defun emcp-test-make-listen-request (id notifications)
+  "Build a subscriptions/listen request with ID for the filter NOTIFICATIONS.
+
+NOTIFICATIONS is an alist such as ((toolsListChanged . t))."
+  (let ((request (emcp-test-make-request "subscriptions/listen"
+                                         `((notifications . ,notifications)))))
+    (setf (alist-get 'id request) id)
+    request))
 
 (defun emcp-test-client-send-request (client request callback &rest meta-args)
   "Send REQUEST through CLIENT, calling CALLBACK with the response.

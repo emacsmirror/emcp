@@ -47,6 +47,15 @@ t means arbitrary choice at runtime."
   :group 'emcp
   :type 'string)
 
+(defcustom emcp-http-keep-alive-interval 5
+  "Seconds between keep-alive comments on open SSE streams.
+
+Keep-alives stop clients and proxies from closing idle streams.  They
+are also how EMCP notices that a client has closed a stream, because a
+closed connection only becomes apparent when sending."
+  :group 'emcp
+  :type 'number)
+
 (cl-defun emcp-http--start-transport (server &key (log-level 'info))
   "Start an HTTP transport for SERVER.
 
@@ -66,7 +75,55 @@ LOG-LEVEL is the HTTP log level."
 (defun emcp-http--stop-transport (server)
   "Shut down the HTTP transport of SERVER."
   (when-let* ((transport (emcp--server-transport server)))
-    (http-server-stop transport)))
+    (unwind-protect
+        (emcp--server-close-subscriptions server)
+      (http-server-stop transport))))
+
+(defun emcp-http--sse-stream (send-response on-open on-disconnect)
+  "Respond with an SSE stream through the http-server function SEND-RESPONSE.
+
+Once the stream is open, call ON-OPEN with a function SEND that is
+called as (funcall SEND MESSAGE &optional FINAL) to send the JSON-RPC
+MESSAGE alist as an event.  If FINAL is non-nil, end the stream after
+MESSAGE.  SEND does nothing after the stream has ended.
+
+Send a keep-alive comment every `emcp-http-keep-alive-interval' seconds.
+If the client closes the stream, call ON-DISCONNECT without arguments.
+This can happen synchronously while ON-OPEN is still running, e.g. when
+its first SEND fails."
+  (let (send-chunk timer)
+    (cl-labels ((close ()
+                  (cancel-timer timer)
+                  (setq send-chunk nil))
+                (write (chunk final)
+                  (when send-chunk
+                    (condition-case nil
+                        (progn
+                          (funcall send-chunk chunk :keep-open (not final))
+                          (when final (close)))
+                      ;; Besides `http-server-client-disconnected', a
+                      ;; client that closes with unread data causes a
+                      ;; connection reset, i.e. a `file-error' while
+                      ;; the process is still open
+                      (error
+                       (close)
+                       (funcall on-disconnect)))))
+                (send (message &optional final)
+                  (write (concat "data: " (json-serialize message) "\n\n") final))
+                (body (chunk-fn)
+                  (setq send-chunk chunk-fn
+                        timer (run-at-time emcp-http-keep-alive-interval
+                                           emcp-http-keep-alive-interval
+                                           #'write ":\n\n" nil))
+                  (funcall on-open #'send)))
+      (funcall send-response
+               `( :status OK
+                  :headers ((Content-Type . "text/event-stream")
+                            (Cache-Control . "no-cache")
+                            ;; Recommended by the spec to stop proxies
+                            ;; from buffering events
+                            (X-Accel-Buffering . "no"))
+                  :body ,#'body)))))
 
 (defun emcp-http--origin-allowed-p (origin)
   "Return non-nil if a request with Origin header ORIGIN may access the server.
@@ -225,7 +282,32 @@ mismatch."
                                       emcp--jsonrpc-method-not-found)
                                  'Not-Found
                                'OK)))
-                 (send-json status response))))
+                 (send-json status response)))
+             (subscribe (context request)
+               (condition-case outcome
+                   (emcp--subscription-requested-notifications request)
+                 (:success
+                  (let (subscription)
+                    (emcp-http--sse-stream
+                     send-response
+                     (lambda (send)
+                       (setq subscription (emcp--server-subscribe
+                                           server context request outcome send))
+                       ;; Acknowledge the subscription separately from
+                       ;; construction, so that we can unsubscribe if
+                       ;; acknowledgment fails, e.g. because the
+                       ;; client has already disconnected.
+                       (emcp--server-acknowledge-subscription server subscription))
+                     (lambda () (emcp--server-unsubscribe server subscription)))))
+                 (emcp-invalid-request
+                  (pcase-let ((`(,code ,error-message ,data) (cdr outcome)))
+                    (emcp--log server context
+                      (warning (format "Rejecting subscription (%s): %s"
+                                       (gethash "id" request)
+                                       (emcp--log-escape error-message)))
+                      (debug (log-message request)))
+                    (send-rpc-response
+                     (emcp--jsonrpc-error request code error-message data)))))))
     (cond*
      ((bind* (path (plist-get http-request :path))
              (method (plist-get http-request :method))
@@ -271,7 +353,10 @@ mismatch."
       (condition-case outcome
           (emcp--request-context server rpc-message)
         (:success
-         (emcp--server-on-request server outcome rpc-message #'send-rpc-response))
+         ;; The response to subscriptions/listen is a stream of notifications
+         (if (equal (gethash "method" rpc-message) "subscriptions/listen")
+             (subscribe outcome rpc-message)
+           (emcp--server-on-request server outcome rpc-message #'send-rpc-response)))
         (emcp-invalid-request
          (apply #'invalid-request rpc-message (cdr outcome))))))))
 

@@ -62,11 +62,13 @@ Should describe the overall purpose of the server."
 (defconst emcp-supported-versions '("2026-07-28")
   "Versions of the MCP spec supported by EMCP.")
 
-(defcustom emcp-list-ttl-ms 60000
+(defcustom emcp-list-ttl-ms 300000
   "Milliseconds for which clients may cache lists and server/discover results.
 
 This is the cache hint for the results of tools/list, prompts/list,
-resources/list, resources/templates/list and server/discover."
+resources/list, resources/templates/list and server/discover.  Clients
+that subscribe to list changes refetch lists after `emcp-reload' anyway,
+so the hint can be long."
   :group 'emcp
   :type 'natnum)
 
@@ -275,6 +277,18 @@ Its fields follow the Implementation type of the MCP schema.")
 Only server/discover sends them, because the base64 data is too large to
 include in every result.")
 
+(defconst emcp--mcp-subscription-notifications
+  '(("toolsListChanged" . "notifications/tools/list_changed")
+    ("promptsListChanged" . "notifications/prompts/list_changed")
+    ("resourcesListChanged" . "notifications/resources/list_changed"))
+  "The notification types that clients can subscribe to and their methods.
+
+Each entry maps a field of the notifications filter of a
+subscriptions/listen request to the notification that EMCP sends for
+it.  EMCP does not support resources/subscribe, so it ignores the filter
+field \"resourceSubscriptions\".  See
+https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions")
+
 (defun emcp--mcp-result (request result)
   "Build a successful MCP response to REQUEST with RESULT data.
 
@@ -316,7 +330,9 @@ https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/cachin
   (tools (make-hash-table :test 'equal) :type 'hash-table
          :documentation "Available tools.")
   (modes nil :type 'list
-         :documentation "Plist of tool modes, e.g. :emcp-tools-eval-mode."))
+         :documentation "Plist of tool modes, e.g. :emcp-tools-eval-mode.")
+  (subscriptions nil :type 'list
+                 :documentation "Open `emcp--subscription's."))
 
 (cl-defun emcp--server-build (&key name prompts resources tools)
   "Build a new MCP server from lists of primitive symbols.
@@ -359,7 +375,10 @@ PROMPTS, RESOURCES, and TOOLS are lists of symbols defined via
   (let ((server-tools (emcp--server-tools server)))
     (clrhash server-tools)
     (dolist (sym tools)
-      (puthash (plist-get (get sym 'emcp-tool) :name) sym server-tools))))
+      (puthash (plist-get (get sym 'emcp-tool) :name) sym server-tools)))
+
+  (pcase-dolist (`(,_ . ,method) emcp--mcp-subscription-notifications)
+    (emcp--server-notify-list-changed server method)))
 
 (defun emcp--server-mode (server key)
   "Return the tool mode stored under KEY in SERVER, or nil if unset.
@@ -373,11 +392,9 @@ clients of SERVER.  Set it with `setf'."
 
 (defun emcp--server-capabilities (_server)
   "Describe MCP server capabilities of SERVER."
-  ;; EMCP cannot notify clients of list changes until it implements
-  ;; subscriptions/listen
-  `((prompts . ((listChanged . :false)))
-    (resources . ((listChanged . :false)))
-    (tools . ((listChanged . :false)))))
+  '((prompts . ((listChanged . t)))
+    (resources . ((listChanged . t)))
+    (tools . ((listChanged . t)))))
 
 ;;; Request context
 
@@ -480,6 +497,121 @@ The label is the clientInfo name or dashes if the name is unknown."
                                  emcp--log-escape-placeholder name t t)
        emcp--log-label-width nil ?\s)
     (make-string emcp--log-label-width ?-)))
+
+;;; Subscriptions
+
+(cl-defstruct (emcp--subscription (:constructor emcp--make-subscription)
+                                  (:copier nil))
+  "A subscriptions/listen stream."
+  (request nil :documentation "The subscriptions/listen request.")
+  (context nil :documentation "The `emcp-context' of the request.")
+  (notifications nil :documentation "The fields of `emcp--mcp-subscription-notifications'
+that the client subscribed to.")
+  (send nil :documentation "Sends a message, see `emcp--server-subscribe'."))
+
+(defun emcp--subscription-requested-notifications (request)
+  "Return the notification types that REQUEST asks for and EMCP can send.
+
+REQUEST is a subscriptions/listen request.  The notification types are
+fields of `emcp--mcp-subscription-notifications' that the notifications
+filter of REQUEST sets to true.  If REQUEST has no filter, signal
+`emcp-invalid-request' with the JSON-RPC error CODE, MESSAGE and DATA."
+  (let* ((params (gethash "params" request))
+         (filter (and (hash-table-p params) (gethash "notifications" params))))
+    (unless (hash-table-p filter)
+      (signal 'emcp-invalid-request
+              (list emcp--jsonrpc-invalid-params "Missing or invalid notifications filter" nil)))
+    (cl-loop for (field . _) in emcp--mcp-subscription-notifications
+             when (eq (gethash field filter) t)
+             collect field)))
+
+(defun emcp--subscription-id (subscription)
+  "Return the id of SUBSCRIPTION, i.e. the id of its subscriptions/listen request."
+  (gethash "id" (emcp--subscription-request subscription)))
+
+(defun emcp--subscription-meta (subscription)
+  "Return the _meta entries that tag messages on SUBSCRIPTION."
+  `((io.modelcontextprotocol/subscriptionId . ,(emcp--subscription-id subscription))))
+
+(defun emcp--server-subscription-notify (server subscription method &optional params)
+  "Send the notification METHOD with PARAMS on SUBSCRIPTION of SERVER."
+  (emcp--log server (emcp--subscription-context subscription)
+    (info (format "< Notification %s (%s)" method (emcp--subscription-id subscription))))
+  (funcall (emcp--subscription-send subscription)
+           (emcp--jsonrpc-notification
+            method `((_meta . ,(emcp--subscription-meta subscription)) ,@params))))
+
+(defun emcp--server-subscribe (server context request notifications send)
+  "Register a subscription on SERVER and return it.
+
+REQUEST is the subscriptions/listen request, CONTEXT its `emcp-context'
+and NOTIFICATIONS the value of `emcp--subscription-requested-notifications'
+for it.  SEND sends messages on the stream of the subscription and is
+called as (funcall SEND MESSAGE &optional FINAL) with a JSON-RPC MESSAGE
+alist.  If FINAL is non-nil, the stream ends after MESSAGE.
+
+The caller must send the acknowledgment with
+`emcp--server-acknowledge-subscription' before anything else."
+  (emcp--log server context
+    (info (format "> Request subscriptions/listen (%s)" (gethash "id" request)))
+    (debug (emcp--prefix-lines "> " (emcp--log-pp (emcp--to-alist (gethash "params" request))))))
+  (let ((subscription (emcp--make-subscription :request request
+                                               :context context
+                                               :notifications notifications
+                                               :send send)))
+    (push subscription (emcp--server-subscriptions server))
+    subscription))
+
+(defun emcp--server-acknowledge-subscription (server subscription)
+  "Acknowledge SUBSCRIPTION on SERVER with the notification types it receives."
+  (emcp--server-subscription-notify
+   server subscription "notifications/subscriptions/acknowledged"
+   `((notifications . ,(mapcar (lambda (field) (cons (intern field) t))
+                               (emcp--subscription-notifications subscription))))))
+
+(defun emcp--server-unsubscribe (server subscription)
+  "Remove SUBSCRIPTION from SERVER after its client closed the stream."
+  (setf (emcp--server-subscriptions server)
+        (delq subscription (emcp--server-subscriptions server)))
+  (emcp--log server (emcp--subscription-context subscription)
+    (info (format "Subscription %s closed by the client" (emcp--subscription-id subscription)))))
+
+(defun emcp--server-close-subscriptions (server)
+  "End all subscriptions on SERVER gracefully.
+
+Respond to each subscriptions/listen request with a complete result,
+which ends its stream, as the spec recommends for servers that shut
+down."
+  (let ((subscriptions (emcp--server-subscriptions server)))
+    (setf (emcp--server-subscriptions server) nil)
+    (dolist (subscription subscriptions)
+      (let ((context (emcp--subscription-context subscription))
+            (id (emcp--subscription-id subscription)))
+        (emcp--log server context
+          (info (format "Subscription %s ended by the server" id)))
+        ;; One failing stream must not keep the others open
+        (condition-case err
+            (funcall (emcp--subscription-send subscription)
+                     (emcp--mcp-result (emcp--subscription-request subscription)
+                                       `((_meta . ,(emcp--subscription-meta subscription))))
+                     t)
+          (error
+           (emcp--log server context
+             (error (format "Failed to end subscription %s: %s"
+                            id (error-message-string err))))))))))
+
+(defun emcp--server-notify-list-changed (server method)
+  "Send the list-changed notification METHOD to the subscriptions on SERVER.
+
+Only subscriptions that requested METHOD receive it.
+
+METHOD is one of the notifications in `emcp--mcp-subscription-notifications'."
+  (let ((field (car (rassoc method emcp--mcp-subscription-notifications))))
+    ;; Iterate over a copy, because sending can unsubscribe a closed
+    ;; stream
+    (dolist (subscription (copy-sequence (emcp--server-subscriptions server)))
+      (when (member field (emcp--subscription-notifications subscription))
+        (emcp--server-subscription-notify server subscription method)))))
 
 ;;; Request handling
 
