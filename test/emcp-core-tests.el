@@ -47,7 +47,7 @@
         (emcp-test-client-with-response client response '((method . "prompts/list"))
           (should (equal (emcp-test-response-data response)
                          '((prompts . [((name . "hello")
-                                        (title "say hello")
+                                        (title . "say hello")
                                         (description . "Greets the user.")
                                         (arguments . [((name . "name")
                                                        (description . "User name")

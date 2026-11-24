@@ -14,3 +14,4 @@ The major change in this version is that *EMCP now speaks version 2026-07-28* of
 - Sessions and the =initialize= handshake. The HTTP transport no longer issues =Mcp-Session-Id= and answers =GET= and =DELETE= requests with =405 Method Not Allowed=.
 ** Fixed
 - Calling an unknown tool or prompt returns error code =-32602= instead of an internal error.
+- Listing prompts no longer fails when a prompt has a =:title=.

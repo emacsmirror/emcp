@@ -860,7 +860,7 @@ https://modelcontextprotocol.io/specification/2026-07-28/server/prompts"
                                 (required . ,(if (plist-member plist :default) :false t))))))
            (metadata
             `((name . ,mcp-name)
-              ,@(when mcp-title `((title ,mcp-title)))
+              ,@(when mcp-title `((title . ,mcp-title)))
               (description . ,mcp-description)
               (arguments . ,arg-metadata)))
            (args-var (gensym "args"))
