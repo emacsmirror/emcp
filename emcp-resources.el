@@ -68,7 +68,10 @@ MANUAL is the current manual for same-manual references."
   "Read NODE from MANUAL and return formatted text with navigation URIs."
   (with-temp-buffer
     (Info-mode)
-    (Info-find-node manual node)
+    (condition-case err
+        (Info-find-node manual node)
+      (user-error
+       (signal 'emcp-resource-not-found (cdr err))))
     (let* ((text (buffer-substring-no-properties (point-min) (point-max)))
            (text (emcp-resources--info-replace-xrefs text manual))
            (nav (emcp-resources--info-extract-nav))

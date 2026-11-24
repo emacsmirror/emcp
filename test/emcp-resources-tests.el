@@ -49,6 +49,16 @@
                (text (alist-get 'text (aref contents 0))))
           (should (string-match-p "Emacs Lisp" text)))))))
 
+(ert-deftest emcp-tests-resource-read-info-not-found ()
+  (emcp-test-with-server server (emcp--server-build :resources '(emcp-resource-info-node))
+    (let ((client (emcp-test-make-client :server server)))
+      (dolist (uri '("info://elisp/No%20Such%20Node" "info://no-such-manual/Top"))
+        (ert-info (uri)
+          (let ((error (alist-get 'error (emcp-test-client-request client "resources/read"
+                                                                   `((uri . ,uri))))))
+            (should (= (alist-get 'code error) emcp--jsonrpc-invalid-params))
+            (should (equal (alist-get 'data error) `((uri . ,uri))))))))))
+
 (ert-deftest emcp-tests-info-replace-xrefs ()
   ;; *note Node::
   (should (equal (emcp-resources--info-replace-xrefs "*note Symbols::" "elisp")
