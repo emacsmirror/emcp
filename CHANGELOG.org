@@ -12,6 +12,7 @@ The major change in this version is that *EMCP now speaks version 2026-07-28* of
 - Resource templates support RFC 6570 reserved expansion: a ~{+name}~ parameter matches values that contain =/=, e.g. file paths.
 - =emcp-confirm-prompt= takes an =:on-cancel= value that the callback receives if the client cancels the request while the confirmation buffer is open. It defaults to the =:on-dismiss= value.
 - The server manager shows request statistics for each server: uptime, open subscriptions, the number of requests and errors, collapsible breakdowns by method and by tool, prompt and resource name, and the clients seen with their request counts.
+- Log buffers use =emcp-log-mode=, a =special-mode= derivative, so =q= closes the log window without killing the buffer and =n= and =p= move between lines.
 ** Changed
 - EMCP speaks MCP 2026-07-28 and requires a client that supports it. This comes with several changes that mirror differences in the spec versions, such as =MCP-Protocol-Version=, =Mcp-Method= and =Mcp-Name= headers, a different error code (=-32602= instead of =-32002=) for missing resources, a new =server/discover= method and optional caching hints for clients.
 - The accept/reject modes of the =eval= and =send-keys= tools apply to the whole server instead of a single session. Choosing "Always accept" or "Always reject" in a confirmation buffer now affects all clients connected to that server, and the server manager shows and cycles (=e=, =K=) the modes per server.

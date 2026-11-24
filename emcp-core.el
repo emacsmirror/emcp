@@ -155,6 +155,17 @@ Useful for logging of long messages and binary blobs."
   "Prepend PREFIX to the lines of STR."
   (concat prefix (replace-regexp-in-string "\n" (concat "\n" prefix) str)))
 
+(defvar-keymap emcp-log-mode-map
+  :doc "Keymap for `emcp-log-mode'."
+  :parent special-mode-map
+  "n" #'next-line
+  "p" #'previous-line)
+
+(define-derived-mode emcp-log-mode special-mode "EMCP-log"
+  "Major mode for EMCP server log buffers.
+
+\\{emcp-log-mode-map}")
+
 (defun emcp--to-alist (object)
   "Recursively convert hash tables in OBJECT to alists.
 
@@ -343,7 +354,7 @@ prompt or resource name for each of the methods \"tools/call\",
   "An MCP server."
   (name "emcp" :type 'string :documentation "Server name")
   (log-buffer (with-current-buffer (generate-new-buffer (format "*%s*" name))
-                (setq buffer-read-only t)
+                (emcp-log-mode)
                 (current-buffer)))
   transport
   (prompts (make-hash-table :test 'equal) :type 'hash-table
