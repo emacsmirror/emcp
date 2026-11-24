@@ -82,9 +82,11 @@ Tools that allow agents to execute arbitrary code, e.g. through code evaluation 
 
 Start the server manager with =M-x emcp-server-manager=. It gives you an overview over all running servers with their URLs and the modes of their =eval= and =send-keys= tools. A mode applies to all clients of a server, so if you have put a server in accept mode, which accepts all code evaluations from all of its clients and does not ask for your input anymore, you can return it to the default ask mode. Cycle a server's mode between accept, reject and ask with =e= for =eval= and =K= for =send-keys=. If you want to give one agent fewer permissions than another, connect it to the server of a more restrictive [[#profiles][profile]]. Press =l= to jump to a server's log buffer, =k= to kill a server you no longer need and =g= to refresh the view.
 
-#+caption: The server manager lets you inspect the servers and update their modes
+#+caption: The server manager lets you inspect the servers, update their modes and see how agents use them
 #+attr_html: :width 640
-[[./media/session-manager.webp]]
+[[./media/server-manager.webp]]
+
+The server manager also shows you statistics about EMCP and how your agents use it: uptime, the number of requests and error responses, and the time of the last request. Collapsible sections break the requests down by method and by the names of the called tools, prompts and resources. The clients section lists each client by the name and version from its =clientInfo= with its number of requests and when it was first and last seen. Clients that send no =clientInfo= appear as "(unknown)", and clients seen within the last five minutes are marked with =*=. The statistics live in memory and start over when the server restarts. Press =g= to see the latest numbers.
 
 * Profiles
 :PROPERTIES:
