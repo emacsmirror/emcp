@@ -4,7 +4,7 @@
 
 EMCP lets your LLM agent interact with Emacs. The agent can look up documentation and definitions, take screenshots, read buffers, execute code and more. Exactly which [[#built-in-prompts][prompts]], [[#built-in-resources][resources]] and [[#built-in-tools][tools]] are available to the agent depends on the active [[#profiles][profile]].
 
-As an MCP implementation, EMCP supports all the core server features from the [[https://modelcontextprotocol.io/specification/2025-11-25/server][2025-11-25 version of the MCP specification]] and even has (as of yet unused) facilities for server-to-client notifications.
+As an MCP implementation, EMCP supports prompts, resources and tools from the [[https://modelcontextprotocol.io/specification/2026-07-28/server][2026-07-28 version of the MCP specification]].
 
 I am adding tools etc. to the project as I need them and find a usable design for them. If there is a tool missing which you really want /right now/, EMCP has been designed to be extensible and adding it yourself should be easy and even fun. Just [[#custom-components][follow the instructions]] or hand them to your agent.
 
@@ -41,7 +41,7 @@ To use EMCP in agent-shell, add it to ~agent-shell-mcp-servers~ as follows
                             (emcp-server-url server))))))
 #+end_src
 
-If ~emcp-default-profile~ is nil, you can choose a different profile for each session interactively. EMCP takes care to start at most one server per profile.
+If ~emcp-default-profile~ is nil, you can choose a different profile for each agent-shell session interactively. EMCP takes care to start at most one server per profile.
 
 *** [[https://github.com/karthink/gptel][gptel]]
 
@@ -52,7 +52,7 @@ The following snippet should, in theory, be enough to integrate EMCP into gptel 
         `(("emcp" . (:url ,(emcp-server-url (emcp-start emcp-default-profile))))))
 #+end_src
 
-However, as of June 14, 2026 [[https://github.com/lizqwerscott/mcp.el][mcp.el]] only supports the =2024-11-05= and =2025-03-26= versions of the MCP specification and EMCP implements =2025-11-25=.
+However, as of November 24, 2026 [[https://github.com/lizqwerscott/mcp.el][mcp.el]] only supports the =2024-11-05= and =2025-03-26= versions of the MCP specification and EMCP requires =2026-07-28=.
 
 *** Non-Emacs clients like Claude Code, Codex, etc.
 
@@ -78,11 +78,11 @@ Tools that allow agents to execute arbitrary code, e.g. through code evaluation 
 #+attr_html: :width 640
 [[./media/confirmation.webp]]
 
-** Session management
+** Server management
 
-Start the session manager with =M-x emcp-session-manager=. It gives you an overview over all running servers and their sessions, so that you can easily see which agent in which project is connected to EMCP. From the manager view, you can also change the policies of the =eval= and =send-keys= tools, so if you have put a server in accept mode, which accepts all code evaluations from all of its clients and does not ask for your input anymore, you can return it to the default ask mode. Press =l= to jump to a server's log buffer or =k= to kill a server you no longer need.
+Start the server manager with =M-x emcp-server-manager=. It gives you an overview over all running servers with their URLs and the modes of their =eval= and =send-keys= tools. A mode applies to all clients of a server, so if you have put a server in accept mode, which accepts all code evaluations from all of its clients and does not ask for your input anymore, you can return it to the default ask mode. Cycle a server's mode between accept, reject and ask with =e= for =eval= and =K= for =send-keys=. If you want to give one agent fewer permissions than another, connect it to the server of a more restrictive [[#profiles][profile]]. Press =l= to jump to a server's log buffer, =k= to kill a server you no longer need and =g= to refresh the view.
 
-#+caption: The session manager lets you inspect the sessions and update their policies
+#+caption: The server manager lets you inspect the servers and update their modes
 #+attr_html: :width 640
 [[./media/session-manager.webp]]
 
@@ -91,7 +91,7 @@ Start the session manager with =M-x emcp-session-manager=. It gives you an overv
 :CUSTOM_ID: profiles
 :END:
 
-Profiles let you mix and match agent abilities for different sessions, so that you can choose which agent can execute code and which can only look up function definitions.
+Profiles let you mix and match abilities for different agents, so that you can choose which agent can execute code and which can only look up function definitions.
 
 ~emcp-default-profile~ lets you choose a default profile by setting it to one of the alist keys of ~emcp-profiles~. Its default nil means to always ask interactively. If ~emcp-default-profile~ is non-nil, you can still choose a profile by calling ~emcp-start~ with =C-u= prefix argument.
 
@@ -276,7 +276,7 @@ Tools:
 :CUSTOM_ID: custom-components
 :END:
 
-Define your own prompts, resources and tools with the macros below, then add them to a profile in ~emcp-profiles~ to make them available to clients. For a complete description of the output format for your components, consult the [[https://modelcontextprotocol.io/specification/2025-11-25/server][MCP specification]].
+Define your own prompts, resources and tools with the macros below, then add them to a profile in ~emcp-profiles~ to make them available to clients. For a complete description of the output format for your components, consult the [[https://modelcontextprotocol.io/specification/2026-07-28/server][MCP specification]].
 
 ** Prompts
 :PROPERTIES:
@@ -321,7 +321,7 @@ Keyword options:
 - ~:description~ :: Defaults to the docstring.
 - ~:async~ :: When non-nil, bind ~send-result~ and ~send-error~ in the body instead of using the return value.
 
-~server~ and ~session~ are bound in the body for access to the MCP server state.
+~server~ and ~context~ are bound in the body. ~context~ is the ~emcp-context~ of the request, whose fields include the client's =clientInfo=: ~(emcp-context-client-info context)~ returns it as a hash table, or nil if the client did not send it.
 
 ** Resources & Resource Templates
 :PROPERTIES:
@@ -356,7 +356,7 @@ Keyword options:
       (signal 'emcp-resource-not-found (list name))))
 #+end_src
 
-The resource body returns a ~resources/read~ result alist. In addition to template parameters, ~server~, ~session~ and ~uri~ (the full request URI) are bound.
+The resource body returns a ~resources/read~ result alist. In addition to template parameters, ~server~, ~context~ (see [[#custom-prompts][prompts]]) and ~uri~ (the full request URI) are bound. To report that the requested resource does not exist, signal ~emcp-resource-not-found~ as in the example above.
 
 For asynchronous resources (e.g. fetching content over the network), pass ~:async t~. This binds ~send-result~ and ~send-error~ in the body instead of using the return value:
 
@@ -381,6 +381,7 @@ Keyword options:
 - ~:title~ :: Human-readable title.
 - ~:description~ :: MCP description. Defaults to the docstring.
 - ~:mime-type~ :: MIME type of the resource content.
+- ~:ttl-ms~ :: How many milliseconds clients may cache a read result. Defaults to 0.
 - ~:async~ :: When non-nil, bind ~send-result~ and ~send-error~ in the body instead of using the return value.
 
 ** Tools
@@ -425,9 +426,10 @@ For asynchronous tools (e.g. waiting for a process or network response), pass ~:
     "Run a shell command asynchronously."
     :name "shell"
     :async t
-    (let ((buf (generate-new-buffer " *emcp-shell*")))
+    (let* ((buf (generate-new-buffer " *emcp-shell*"))
+           (proc (start-process-shell-command "emcp-shell" buf command)))
       (set-process-sentinel
-       (start-process-shell-command "emcp-shell" buf command)
+       proc
        (lambda (proc _event)
          (let ((output (with-current-buffer (process-buffer proc)
                          (buffer-string))))
@@ -435,16 +437,20 @@ For asynchronous tools (e.g. waiting for a process or network response), pass ~:
            (if (zerop (process-exit-status proc))
                (send-result `((content . [((type . "text") (text . ,output))])))
              (send-error -1 (format "Exit %d" (process-exit-status proc))
-                         `((output . ,output)))))))))
+                         `((output . ,output)))))))
+      ;; Stop the command if the client cancels the request
+      (emcp-context-on-cancel context #'delete-process proc)))
 #+end_src
 
 Keyword options:
-- ~:name~ :: How the agent calls the tool. Defaults to the elisp symbol name (such as ~my-tool-eval~ above).
+- ~:name~ :: How the agent calls the tool. Defaults to the elisp symbol name (such as ~my-tool-shell~ above).
 - ~:title~ :: Human-readable title.
 - ~:description~ :: Defaults to the docstring.
 - ~:async~ :: When non-nil, bind ~send-result~ and ~send-error~ in the body instead of using the return value.
 
-~server~ and ~session~ are bound in the body for access to the MCP server state.
+~server~ and ~context~ are bound in the body. ~context~ is the ~emcp-context~ of the request, whose fields include the client's =clientInfo=: ~(emcp-context-client-info context)~ returns it as a hash table, or nil if the client did not send it.
+
+If the client cancels an asynchronous request by closing the connection, ~send-result~ and ~send-error~ do nothing. Call ~(emcp-context-on-cancel context FUNCTION ARGS...)~ as in the example above to stop work that is no longer needed, or check ~(emcp-context-cancelled context)~. The same applies to asynchronous prompts and resources.
 
 * Built-in MCP Components
 
@@ -945,7 +951,7 @@ Default: ~"Inspect and control the user's running Emacs.\n\nUse this when you ar
 
 Default: ~300000~
 
-** [[./emcp-core.el::85][~emcp-log-level~]]
+** [[./emcp-core.el::87][~emcp-log-level~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-log-level
 :END:
