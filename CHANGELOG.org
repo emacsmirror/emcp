@@ -9,6 +9,7 @@ The major change in this version is that *EMCP now speaks version 2026-07-28* of
 - SSE streams send a keep-alive message every =emcp-http-keep-alive-interval= seconds.
 - If the client cancels an =eval= or =send-keys= call while its confirmation buffer is open, the buffer closes without evaluating the code or sending the keys.
 - =emcp-context-on-cancel= registers a function and its arguments that run when the client cancels a request, so that async tools, prompts and resources can stop work that is no longer needed.
+- Resource templates support RFC 6570 reserved expansion: a ~{+name}~ parameter matches values that contain =/=, e.g. file paths.
 - =emcp-confirm-prompt= takes an =:on-cancel= value that the callback receives if the client cancels the request while the confirmation buffer is open. It defaults to the =:on-dismiss= value.
 ** Changed
 - EMCP speaks MCP 2026-07-28 and requires a client that supports it. This comes with several changes that mirror differences in the spec versions, such as =MCP-Protocol-Version=, =Mcp-Method= and =Mcp-Name= headers, a different error code (=-32602= instead of =-32002=) for missing resources, a new =server/discover= method and optional caching hints for clients.

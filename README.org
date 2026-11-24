@@ -328,7 +328,7 @@ Keyword options:
 :CUSTOM_ID: custom-resources
 :END:
 
-~emcp-defresource~ defines an MCP resource. If the URI contains ~{param}~ placeholders (RFC 6570), it becomes a resource template; otherwise it is a static resource. Template parameters are automatically extracted and bound in the body.
+~emcp-defresource~ defines an MCP resource. If the URI contains ~{param}~ placeholders (RFC 6570), it becomes a resource template; otherwise it is a static resource. Template parameters are automatically extracted and bound in the body. A ~{name}~ parameter matches a single path segment, i.e. a value without =/=, while a ~{+name}~ parameter (RFC 6570 reserved expansion) also matches =/= and binds ~name~.
 
 #+begin_src emacs-lisp
   ;; Static resource
@@ -361,8 +361,8 @@ The resource body returns a ~resources/read~ result alist. In addition to templa
 For asynchronous resources (e.g. fetching content over the network), pass ~:async t~. This binds ~send-result~ and ~send-error~ in the body instead of using the return value:
 
 #+begin_src emacs-lisp
-  (emcp-defresource my-resource-url "https://{host}/{path}"
-    "Fetch a URL."
+  (emcp-defresource my-resource-url "web://{host}/{+path}"
+    "Fetch a web page through Emacs, e.g. web://example.com/docs/intro.html."
     :name "url"
     :mime-type "text/html"
     :async t

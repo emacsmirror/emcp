@@ -39,5 +39,25 @@
                                   '((manual . "elisp") (node . "Buffer List")))
                  "info://elisp/Buffer%20List")))
 
+(ert-deftest emcp-tests-uri-reserved-match ()
+  "{+path} matches multiple segments and binds `path'."
+  (let ((compiled (emcp-uri--compile-template "file://{+path}")))
+    (should (equal (emcp-uri--match "file:///home/user/My%20Notes.org" compiled)
+                   '((path . "/home/user/My Notes.org"))))))
+
+(ert-deftest emcp-tests-uri-simple-match-single-segment ()
+  "{var} only matches a single path segment."
+  (should-not (emcp-uri--match "info://elisp/a/b"
+                               (emcp-uri--compile-template "info://{manual}/{node}"))))
+
+(ert-deftest emcp-tests-uri-reserved-build ()
+  "{+var} keeps reserved characters and percent-encoded triplets.
+
+It encodes everything else, including a % that starts no triplet."
+  (should (equal (emcp-uri--build "file://{+path}" '((path . "/home/My Notes.org")))
+                 "file:///home/My%20Notes.org"))
+  (should (equal (emcp-uri--build "file://{+path}" '((path . "/a%20b/100%/ä")))
+                 "file:///a%20b/100%25/%C3%A4")))
+
 (provide 'emcp-uri-tests)
 ;;; emcp-uri-tests.el ends here

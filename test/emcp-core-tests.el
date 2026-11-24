@@ -357,6 +357,22 @@
           (should (equal (alist-get 'message (alist-get 'error response))
                          "No greeting for you")))))))
 
+(ert-deftest emcp-tests-reserved-resource-template ()
+  "A {+path} template binds `path' to a multi-segment value."
+  (let ((sym (make-symbol "file-resource")))
+    (eval
+     `(emcp-defresource ,sym "emcp://file/{+path}"
+        "A file resource."
+        `((contents . [((uri . ,uri) (text . ,path))])))
+     t)
+    (emcp-test-with-server server (emcp--server-build :resources (list sym))
+      (let ((client (emcp-test-make-client :server server)))
+        (emcp-test-client-with-response client response
+                                        '((method . "resources/read")
+                                          (params . ((uri . "emcp://file/a/b%20c.txt"))))
+          (let ((contents (alist-get 'contents (emcp-test-response-data response))))
+            (should (equal (alist-get 'text (aref contents 0)) "a/b c.txt"))))))))
+
 (ert-deftest emcp-tests-resource-read-errors ()
   ;; A URI that no resource matches and a body that signals
   ;; `emcp-resource-not-found' return invalid params, any other error
