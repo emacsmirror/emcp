@@ -407,8 +407,12 @@
             (should (equal (alist-get 'text (aref contents 0))
                            "test-client 2026-07-28 44 emcp-test"))))))))
 
-(ert-deftest emcp-tests-log-prefix-client-label ()
-  ;; Log lines start with the client name, truncated or padded to a fixed width.
+(ert-deftest emcp-tests-log-prefix ()
+  "Log lines start with the client name and a request number.
+
+The name is truncated or padded to a fixed width.  EMCP numbers
+requests per server, because ids are only unique per client (both use
+id 1), and the request line maps the number to the client's id."
   (emcp-test-with-server server (emcp--server-build)
     (dolist (name '("a-very-long-client-name" "short"))
       (let ((client (emcp-test-make-client
@@ -416,8 +420,11 @@
         (emcp-test-client-request client "tools/list")))
     (with-current-buffer (emcp--server-log-buffer server)
       (let ((log (buffer-string)))
-        (should (string-match-p "^[^ ]+ [^ ]+ INFO  a-very-lon > Request tools/list" log))
-        (should (string-match-p "^[^ ]+ [^ ]+ INFO  short      > Request tools/list" log))))))
+        (cl-flet ((logged-p (line)
+                    (string-match-p (concat "^[^ ]+ [^ ]+ INFO  " line "$") log)))
+          (should (logged-p "a-very    1 > Request tools/list (id 1)"))
+          (should (logged-p "a-very    1 Response ok"))
+          (should (logged-p "short     2 > Request tools/list (id 1)")))))))
 
 ;;; Cancellation
 

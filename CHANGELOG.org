@@ -15,6 +15,7 @@ The major change in this version is that *EMCP now speaks version 2026-07-28* of
 - The accept/reject modes of the =eval= and =send-keys= tools apply to the whole server instead of a single session. Choosing "Always accept" or "Always reject" in a confirmation buffer now affects all clients connected to that server, and the session manager shows and cycles (=e=, =K=) the modes per server.
 - The session manager is replaced by a server manager, =M-x emcp-server-manager=, which lists the running servers alphabetically with their log buffer and tool modes.
 - Asynchronous tools, prompts and resources that do not respond right away answer with an SSE stream that sends Keep-Alive messages until the response is ready, so that EMCP notices when the client closes the connection and treats it as cancellation. Their =send-result= and =send-error= do nothing after a cancellation.
+- Log lines start with the client name and a request number that EMCP counts per server.
 - =M-x emcp-reload= notifies clients about changed tool, prompt and resource lists through =subscriptions/listen= streams as described in the new spec.
 ** Removed
 - Sessions and the =initialize= handshake. The HTTP transport no longer issues =Mcp-Session-Id= and answers =GET= and =DELETE= requests with =405 Method Not Allowed=.

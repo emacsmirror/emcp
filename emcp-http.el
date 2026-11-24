@@ -321,7 +321,7 @@ mismatch."
                  (emcp-invalid-request
                   (pcase-let ((`(,code ,error-message ,data) (cdr outcome)))
                     (emcp--log server context
-                      (warning (format "Rejecting subscription (%s): %s"
+                      (warning (format "Rejecting subscription (id %s): %s"
                                        (gethash "id" request)
                                        (emcp--log-escape error-message)))
                       (debug (log-message request)))

@@ -79,8 +79,10 @@ so the hint can be long."
   ;; Has to be available at compile time for emcp--log
   (defconst emcp-log-levels '(trace debug info warning error)
     "Possible log levels from most to least chatty.")
-  (defconst emcp--log-label-width 10
-    "Width of the client label at the start of each log line."))
+  (defconst emcp--log-label-width 6
+    "Width of the client label at the start of each log line.")
+  (defconst emcp--log-request-width 4
+    "Minimum width of the request number column in log lines."))
 
 (defcustom emcp-log-level 'info
   "Current log level."
@@ -122,9 +124,7 @@ evaluate BODY for a message.  If the message is nil, nothing is logged."
                        (let ((prefix (format "%s %s %s "
                                              (format-time-string "%Y/%m/%d %T.%3N")
                                              ,level-name
-                                             ,(if context
-                                                  `(emcp--context-log-label ,context-var)
-                                                (make-string emcp--log-label-width ?-)))))
+                                             (emcp--context-log-columns ,context-var))))
                          (insert (emcp--prefix-lines prefix ,message) "\n")))))
                 clauses))
            (when ,point-at-max
@@ -333,7 +333,9 @@ https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/cachin
   (modes nil :type 'list
          :documentation "Plist of tool modes, e.g. :emcp-tools-eval-mode.")
   (subscriptions nil :type 'list
-                 :documentation "Open `emcp--subscription's."))
+                 :documentation "Open `emcp--subscription's.")
+  (request-count 0 :type 'integer
+                 :documentation "Number of requests so far, for logging."))
 
 (cl-defun emcp--server-build (&key name prompts resources tools)
   "Build a new MCP server from lists of primitive symbols.
@@ -407,6 +409,7 @@ clients of SERVER.  Set it with `setf'."
   (client-info nil :documentation "The clientInfo object as a hash table, or nil.")
   (client-capabilities nil :documentation "The client capabilities as a hash table.")
   (request-id nil :documentation "The JSON-RPC request id, or nil.")
+  (number nil :documentation "The number of the request on its server, or nil.")
   (cancelled nil :documentation "Non-nil once the request has been cancelled.")
   (cancel-hooks nil :documentation "(FUNCTION . ARGS) to call on cancellation, newest first."))
 
@@ -431,7 +434,7 @@ will not be sent anymore."
       (setf (emcp-context-cancelled context) t
             (emcp-context-cancel-hooks context) nil)
       (emcp--log (emcp-context-server context) context
-        (info (format "Request %s cancelled" (emcp-context-request-id context))))
+        (info "Request cancelled"))
       (dolist (hook hooks)
         ;; One failing hook must not keep the others from cleaning up
         (condition-case err
@@ -484,7 +487,9 @@ the JSON-RPC error CODE, MESSAGE and DATA."
                             :protocol-version version
                             :client-info client-info
                             :client-capabilities capabilities
-                            :request-id (gethash "id" request)))))))
+                            :request-id (gethash "id" request)
+                            ;; Client ids are only unique per client
+                            :number (cl-incf (emcp--server-request-count server))))))))
 
 (defun emcp--context-client-info-field (context field)
   "Return the non-empty string FIELD of CONTEXT's clientInfo, or nil."
@@ -518,6 +523,19 @@ the JSON-RPC error CODE, MESSAGE and DATA."
               (emcp--sanitize-label label)
             "Unknown client")
           (emcp--server-name (emcp-context-server context))))
+
+(defun emcp--context-log-columns (context)
+  "Return the client label and request number of CONTEXT for logging.
+
+The label is the clientInfo name.  The request number is right-aligned.
+Unknown values and a nil CONTEXT show as dashes."
+  (format (format "%%s %%%ds" emcp--log-request-width)
+          (if context
+              (emcp--context-log-label context)
+            (make-string emcp--log-label-width ?-))
+          (if context
+              (emcp-context-number context)
+            (make-string emcp--log-request-width ?-))))
 
 (defun emcp--context-log-label (context)
   "Return the client label of CONTEXT for logging.
@@ -574,7 +592,7 @@ filter of REQUEST sets to true.  If REQUEST has no filter, signal
 
 If FINAL is non-nil, end the stream of SUBSCRIPTION afterwards."
   (emcp--log server (emcp--subscription-context subscription)
-    (info (format "< Notification %s (%s)" method (emcp--subscription-id subscription))))
+    (info (format "< Notification %s" method)))
   (funcall (emcp--subscription-send subscription)
            (emcp--jsonrpc-notification
             method `((_meta . ,(emcp--subscription-meta subscription)) ,@params))
@@ -592,7 +610,7 @@ alist.  If FINAL is non-nil, the stream ends after MESSAGE.
 The caller must send the acknowledgment with
 `emcp--server-acknowledge-subscription' before anything else."
   (emcp--log server context
-    (info (format "> Request subscriptions/listen (%s)" (gethash "id" request)))
+    (info (format "> Request subscriptions/listen (id %s)" (gethash "id" request)))
     (debug (emcp--prefix-lines "> " (emcp--log-pp (emcp--to-alist (gethash "params" request))))))
   (let ((subscription (emcp--make-subscription :request request
                                                :context context
@@ -613,7 +631,7 @@ The caller must send the acknowledgment with
   (setf (emcp--server-subscriptions server)
         (delq subscription (emcp--server-subscriptions server)))
   (emcp--log server (emcp--subscription-context subscription)
-    (info (format "Subscription %s closed by the client" (emcp--subscription-id subscription)))))
+    (info "Subscription closed by the client")))
 
 (defun emcp--server-close-subscriptions (server)
   "End all subscriptions on SERVER, e.g. because it shuts down.
@@ -626,7 +644,7 @@ references its subscriptions/listen request."
       (let ((context (emcp--subscription-context subscription))
             (id (emcp--subscription-id subscription)))
         (emcp--log server context
-          (info (format "Subscription %s ended by the server" id)))
+          (info "Subscription ended by the server"))
         ;; One failing stream must not keep the others open
         (condition-case err
             ;; The cancellation pattern of the spec requires this
@@ -638,8 +656,8 @@ references its subscriptions/listen request."
              t)
           (error
            (emcp--log server context
-             (error (format "Failed to end subscription %s: %s"
-                            id (error-message-string err))))))))))
+             (error (format "Failed to end subscription: %s"
+                            (error-message-string err))))))))))
 
 (defun emcp--server-notify-list-changed (server method)
   "Send the list-changed notification METHOD to the subscriptions on SERVER.
@@ -669,7 +687,7 @@ has been cancelled via `emcp--context-cancel' by then."
             (detail (pcase method
                       ((or "tools/call" "prompts/get") (gethash "name" params))
                       ("resources/read" (gethash "uri" params)))))
-       (format "> Request %s%s (%s)"
+       (format "> Request %s%s (id %s)"
                method
                (if detail (format " %s" detail) "")
                (gethash "id" request))))
@@ -679,11 +697,10 @@ has been cancelled via `emcp--context-cancel' by then."
   (cl-flet ((log-and-send (response)
               (let ((cancelled (emcp-context-cancelled context)))
                 (emcp--log server context
-                  (info (format "%s %s (%s)"
+                  (info (format "%s %s"
                                 ;; The spec forbids sending it
                                 (if cancelled "Dropping response" "Response")
-                                (if (alist-get 'error response) "error" "ok")
-                                (alist-get 'id response)))
+                                (if (alist-get 'error response) "error" "ok")))
                   (debug (emcp--prefix-lines "< " (emcp--log-pp
                                                    (or (alist-get 'result response)
                                                        (alist-get 'error response))))))
@@ -692,8 +709,7 @@ has been cancelled via `emcp--context-cancel' by then."
                       (funcall send-response response)
                     (error
                      (emcp--log server context
-                       (error (format "Failed to send response (%s): %s"
-                                      (alist-get 'id response)
+                       (error (format "Failed to send response: %s"
                                       (error-message-string err))))
                      ;; Answer the request anyway, e.g. if RESPONSE is
                      ;; not valid JSON
@@ -704,8 +720,7 @@ has been cancelled via `emcp--context-cancel' by then."
                                                  "Failed to send response"))
                        (error
                         (emcp--log server context
-                          (error (format "Failed to send error response (%s): %s"
-                                         (alist-get 'id response)
+                          (error (format "Failed to send error response: %s"
                                          (error-message-string fallback-err))))))
                      ;; Let the caller know about the original failure
                      (signal (car err) (cdr err))))))))
