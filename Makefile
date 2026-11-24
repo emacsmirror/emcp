@@ -24,7 +24,7 @@ LOAD_PATH="(progn \
     (package-install 'magit-section)) \
   (add-to-list 'load-path default-directory))"
 
-.PHONY: test lint byte-compile checkdoc docs clean update-deps
+.PHONY: test lint byte-compile checkdoc format docs clean update-deps
 
 lint: byte-compile checkdoc
 
@@ -43,6 +43,22 @@ checkdoc:
 		                       (quote ((name . count-checkdoc-warnings)))) \
 		           (mapc (function checkdoc-file) (list $(patsubst %,\"%\",$(EL_FILES)))) \
 		           (when (> n 0) (message \"checkdoc: found docstring issues (see warnings above)\") (kill-emacs 1)))"
+
+# Load all code first, so that the indentation declarations of EMCP's and the
+# tests' macros apply.
+format:
+	$(EMACS) --batch \
+		--eval $(LOAD_PATH) \
+		--eval "(add-to-list 'load-path (expand-file-name \"test\"))" \
+		$(patsubst %,-l %,$(EL_FILES) $(wildcard test/*.el)) \
+		--eval "(dolist (file (list $(patsubst %,\"%\",$(EL_FILES) $(wildcard test/*.el)))) \
+		           (with-current-buffer (find-file-noselect file) \
+		             (setq-local indent-tabs-mode nil) \
+		             (indent-region (point-min) (point-max)) \
+		             (delete-trailing-whitespace) \
+		             (when (buffer-modified-p) \
+		               (message \"Formatted %s\" file) \
+		               (save-buffer))))"
 
 TEST_FILES ?= $(wildcard test/*-tests.el)
 TEST_SELECTOR ?= t
