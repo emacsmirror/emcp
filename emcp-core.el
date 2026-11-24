@@ -19,8 +19,9 @@
 
 ;;; Commentary:
 
-;; This file contains logging, the protocol-independent MCP server struct, the
-;; capability-defining macros and similarly foundational facilities.
+;; This file contains logging, JSON-RPC and MCP protocol utilities,
+;; the MCP server struct, the per-request context, the handlers for
+;; MCP requests and the primitive-defining macros.
 
 ;;; Code:
 
@@ -31,6 +32,12 @@
 (require 'emcp-uri)
 
 (define-error 'emcp-error "emcp")
+
+;; Signaled with data (CODE MESSAGE DATA) for the JSON-RPC error response
+(define-error 'emcp-invalid-request "Invalid MCP request" 'emcp-error)
+
+;; Signaled by resource bodies to report a missing resource
+(define-error 'emcp-resource-not-found "Resource not found" 'emcp-error)
 
 (defgroup emcp ()
   "An Emacs MCP server."
@@ -46,17 +53,22 @@ Use this when you are
 - or controlling an Emacs instance.
 
 Prefer this server over file operations or shell commands when working in an Emacs context."
-  "Instructions to send to clients during initialization.
+  "Instructions for clients discovering the server.
 
 Should describe the overall purpose of the server."
   :group 'emcp
   :type 'string)
 
-(defconst emcp-supported-versions '("2025-11-25")
-  "Versions of the MCP spec supported by EMCP.
+(defconst emcp-supported-versions '("2026-07-28")
+  "Versions of the MCP spec supported by EMCP.")
 
-This is what is actually supported.  If your client refuses to connect,
-you can try just adding your client's version and hoping for the best.")
+(defcustom emcp-list-ttl-ms 60000
+  "Milliseconds for which clients may cache lists and server/discover results.
+
+This is the cache hint for the results of tools/list, prompts/list,
+resources/list, resources/templates/list and server/discover."
+  :group 'emcp
+  :type 'natnum)
 
 ;;; Logging
 
@@ -162,6 +174,9 @@ Keys are interned so that the output matches handwritten alist style."
 
 ;;; JSON-RPC 2.0 utilities
 
+(defconst emcp--jsonrpc-parse-error -32700
+  "Error code for invalid JSON.")
+
 (defconst emcp--jsonrpc-invalid-request -32600
   "Error code for an invalid request.")
 
@@ -221,6 +236,67 @@ arbitrary data related to the error."
               (message . ,message)
               ,@(when data `((data . ,data)))))))
 
+;;; MCP protocol
+
+(defconst emcp--mcp-header-mismatch -32020
+  "Error code for HTTP headers that are missing or do not match the body.")
+
+(defconst emcp--mcp-unsupported-protocol-version -32022
+  "Error code for a request with an unsupported protocol version.")
+
+(defconst emcp--mcp-log-level-names
+  '("debug" "info" "notice" "warning" "error" "critical" "alert" "emergency")
+  "The log levels defined by MCP.
+
+See https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/logging")
+
+(defconst emcp--mcp-server-info
+  '((name . "EMCP")
+    (title . "EMCP - An MCP server for Emacs")
+    (version . "0.1.0")
+    (description . "Lets your agent talk to Emacs")
+    (websiteUrl . "https://codeberg.org/martenlienen/emcp"))
+  "The server info that identifies EMCP in the _meta of every result.
+
+Its fields follow the Implementation type of the MCP schema.")
+
+(defconst emcp--mcp-server-icons
+  (when-let* ((file (or load-file-name buffer-file-name))
+              (path (expand-file-name "emacs.svg" (file-name-directory file)))
+              ((file-readable-p path)))
+    (let ((data (with-temp-buffer
+                  (insert-file-contents-literally path)
+                  (buffer-string))))
+      `[((mimeType . "image/svg+xml")
+         (sizes . ["any"])
+         (src . ,(concat "data:image/svg+xml;base64," (base64-encode-string data t))))]))
+  "The icons of EMCP, or nil if the icon file is missing.
+
+Only server/discover sends them, because the base64 data is too large to
+include in every result.")
+
+(defun emcp--mcp-result (request result)
+  "Build a successful MCP response to REQUEST with RESULT data.
+
+Mark RESULT as complete and add the server info to its _meta entries,
+unless RESULT sets it itself."
+  (let ((meta (alist-get '_meta result)))
+    (emcp--jsonrpc-result
+     request
+     `((resultType . "complete")
+       ,@(assq-delete-all '_meta (copy-sequence result))
+       (_meta . (,@meta
+                 ,@(unless (assq 'io.modelcontextprotocol/serverInfo meta)
+                     `((io.modelcontextprotocol/serverInfo
+                        . ,emcp--mcp-server-info)))))))))
+
+(defun emcp--mcp-cacheable (result ttl-ms scope)
+  "Add the cache hints TTL-MS and SCOPE to RESULT.
+
+SCOPE is \"public\" or \"private\", see
+https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching"
+  `(,@result (ttlMs . ,ttl-ms) (cacheScope . ,scope)))
+
 ;;; MCP Server
 
 (cl-defstruct (emcp--server (:constructor emcp--make-server)
@@ -231,8 +307,6 @@ arbitrary data related to the error."
                 (setq buffer-read-only t)
                 (current-buffer)))
   transport
-  (sessions (make-hash-table :test 'equal) :type 'hash-table
-            :documentation "Active client sessions.")
   (prompts (make-hash-table :test 'equal) :type 'hash-table
            :documentation "Available prompt templates.")
   (resources (make-hash-table :test 'equal) :type 'hash-table
@@ -244,6 +318,49 @@ arbitrary data related to the error."
   (modes nil :type 'list
          :documentation "Plist of tool modes, e.g. :emcp-tools-eval-mode."))
 
+(cl-defun emcp--server-build (&key name prompts resources tools)
+  "Build a new MCP server from lists of primitive symbols.
+
+NAME is the server name.
+
+PROMPTS, RESOURCES, and TOOLS are lists of symbols defined via
+`emcp-defprompt', `emcp-defresource' and `emcp-deftool'."
+  (let ((server (emcp--make-server :name name)))
+    (emcp--server-reload server
+                         :prompts prompts
+                         :resources resources
+                         :tools tools)
+    server))
+
+(defun emcp--server-destroy (server)
+  "Release the resources of SERVER, i.e. its log buffer."
+  (kill-buffer (emcp--server-log-buffer server)))
+
+(cl-defun emcp--server-reload (server &key prompts resources tools)
+  "Reload the components of SERVER.
+
+PROMPTS, RESOURCES, and TOOLS are lists of symbols defined via
+`emcp-defprompt', `emcp-defresource' and `emcp-deftool'."
+
+  (let ((server-prompts (emcp--server-prompts server)))
+    (clrhash server-prompts)
+    (dolist (sym prompts)
+      (puthash (plist-get (get sym 'emcp-prompt) :name) sym server-prompts)))
+
+  (let ((server-resources (emcp--server-resources server))
+        (server-templates (emcp--server-resource-templates server)))
+    (clrhash server-resources)
+    (clrhash server-templates)
+    (dolist (sym resources)
+      (if-let* ((template (get sym 'emcp-resource-template)))
+          (puthash (plist-get template :name) sym server-templates)
+        (puthash (plist-get (get sym 'emcp-resource) :name) sym server-resources))))
+
+  (let ((server-tools (emcp--server-tools server)))
+    (clrhash server-tools)
+    (dolist (sym tools)
+      (puthash (plist-get (get sym 'emcp-tool) :name) sym server-tools))))
+
 (defun emcp--server-mode (server key)
   "Return the tool mode stored under KEY in SERVER, or nil if unset.
 
@@ -253,6 +370,14 @@ clients of SERVER.  Set it with `setf'."
 
 (gv-define-setter emcp--server-mode (mode server key)
   `(setf (plist-get (emcp--server-modes ,server) ,key) ,mode))
+
+(defun emcp--server-capabilities (_server)
+  "Describe MCP server capabilities of SERVER."
+  ;; EMCP cannot notify clients of list changes until it implements
+  ;; subscriptions/listen
+  `((prompts . ((listChanged . :false)))
+    (resources . ((listChanged . :false)))
+    (tools . ((listChanged . :false)))))
 
 ;;; Request context
 
@@ -265,20 +390,54 @@ clients of SERVER.  Set it with `setf'."
   (client-capabilities nil :documentation "The client capabilities as a hash table.")
   (request-id nil :documentation "The JSON-RPC request id, or nil."))
 
-(defun emcp--context-from-session (server session &optional request-id)
-  "Build the context of a request with REQUEST-ID on SERVER in SESSION."
-  (emcp--make-context :server server
-                      :protocol-version (plist-get session :protocol-version)
-                      :client-info (plist-get session :client-info)
-                      :client-capabilities (plist-get session :client-capabilities)
-                      :request-id request-id))
+(defun emcp--request-context (server request)
+  "Return the `emcp-context' for the JSON-RPC REQUEST to SERVER.
+
+If the _meta of REQUEST is invalid, signal `emcp-invalid-request' with
+the JSON-RPC error CODE, MESSAGE and DATA."
+  (let* ((params (gethash "params" request))
+         (meta (and (hash-table-p params) (gethash "_meta" params)))
+         (field (lambda (key)
+                  (and (hash-table-p meta)
+                       (gethash (concat "io.modelcontextprotocol/" key) meta))))
+         (version (funcall field "protocolVersion"))
+         (capabilities (funcall field "clientCapabilities"))
+         (client-info (funcall field "clientInfo"))
+         (log-level (funcall field "logLevel")))
+    (cl-flet ((fail (code message &optional data)
+                (signal 'emcp-invalid-request (list code message data))))
+      (cond
+       ((not (stringp version))
+        (fail emcp--jsonrpc-invalid-params
+              "Missing or invalid _meta field io.modelcontextprotocol/protocolVersion"))
+       ((not (member version emcp-supported-versions))
+        (fail emcp--mcp-unsupported-protocol-version "Unsupported protocol version"
+              `((supported . ,(vconcat emcp-supported-versions))
+                (requested . ,version))))
+       ((not (hash-table-p capabilities))
+        (fail emcp--jsonrpc-invalid-params
+              "Missing or invalid _meta field io.modelcontextprotocol/clientCapabilities"))
+       ((and client-info
+             (not (and (hash-table-p client-info)
+                       (stringp (gethash "name" client-info))
+                       (stringp (gethash "version" client-info))
+                       (stringp (gethash "title" client-info "")))))
+        (fail emcp--jsonrpc-invalid-params
+              "Invalid _meta field io.modelcontextprotocol/clientInfo"))
+       ((and log-level (not (member log-level emcp--mcp-log-level-names)))
+        (fail emcp--jsonrpc-invalid-params
+              (format "Invalid log level in _meta: %S" log-level)))
+       (t
+        (emcp--make-context :server server
+                            :protocol-version version
+                            :client-info client-info
+                            :client-capabilities capabilities
+                            :request-id (gethash "id" request)))))))
 
 (defun emcp--context-client-info-field (context field)
   "Return the non-empty string FIELD of CONTEXT's clientInfo, or nil."
   (when-let* ((info (emcp-context-client-info context))
-              ((hash-table-p info))
               (value (gethash field info))
-              ((stringp value))
               ((not (string-empty-p value))))
     value))
 
@@ -322,243 +481,86 @@ The label is the clientInfo name or dashes if the name is unknown."
        emcp--log-label-width nil ?\s)
     (make-string emcp--log-label-width ?-)))
 
-(cl-defun emcp--server-build (&key name prompts resources tools)
-  "Build a new MCP server from lists of capability symbols.
+;;; Request handling
 
-NAME is the server name.
+(defun emcp--server-on-request (server context request send-response)
+  "Handle the MCP JSON-RPC2.0 request REQUEST on SERVER with CONTEXT.
 
-PROMPTS, RESOURCES, and TOOLS are lists of symbols defined via
-`emcp-defprompt', `emcp-defresource' and `emcp-deftool'."
-  (let ((server (emcp--make-server :name name)))
-    (emcp--server-reload server
-                         :prompts prompts
-                         :resources resources
-                         :tools tools)
-    server))
-
-(defun emcp--server-stop (server)
-  "Stop SERVER and clean up its log buffer."
-  (kill-buffer (emcp--server-log-buffer server)))
-
-(cl-defun emcp--server-reload (server &key prompts resources tools)
-  "Reload the components of SERVER.
-
-PROMPTS, RESOURCES, and TOOLS are lists of symbols defined via
-`emcp-defprompt', `emcp-defresource' and `emcp-deftool'."
-
-  (let ((server-prompts (emcp--server-prompts server)))
-    (clrhash server-prompts)
-    (dolist (sym prompts)
-      (puthash (plist-get (get sym 'emcp-prompt) :name) sym server-prompts)))
-
-  (let ((server-resources (emcp--server-resources server))
-        (server-templates (emcp--server-resource-templates server)))
-    (clrhash server-resources)
-    (clrhash server-templates)
-    (dolist (sym resources)
-      (if-let* ((template (get sym 'emcp-resource-template)))
-          (puthash (plist-get template :name) sym server-templates)
-        (puthash (plist-get (get sym 'emcp-resource) :name) sym server-resources))))
-
-  (let ((server-tools (emcp--server-tools server)))
-    (clrhash server-tools)
-    (dolist (sym tools)
-      (puthash (plist-get (get sym 'emcp-tool) :name) sym server-tools)))
-
-  (cl-loop for session being the hash-values of (emcp--server-sessions server) do
-           (emcp--server-send-notification server session "notifications/prompts/list_changed")
-           (emcp--server-send-notification server session "notifications/resources/list_changed")
-           (emcp--server-send-notification server session "notifications/tools/list_changed")))
-
-(defun emcp--server-capabilities (_server)
-  "Describe MCP server capabilities of SERVER."
-  `((prompts . ((listChanged . t)))
-    (resources . ((listChanged . t)
-                  (subscribe . :false)))
-    (tools . ((listChanged . t)))))
-
-(defun emcp--server-on-initialize (server request)
-  "Initialize a new session on SERVER.
-
-REQUEST is an MCP initialization request.
-
-Returns (SESSION . RESPONSE) where SESSION is the newly created session
-and RESPONSE is the JSON-RPC response."
-  (let* ((params (gethash "params" request))
-         (requested-version (gethash "protocolVersion" params))
-         (protocol-version
-          (if (seq-contains-p emcp-supported-versions requested-version)
-              requested-version
-            (car emcp-supported-versions)))
-         (icon (when-let* ((emcp-dir (file-name-directory (locate-library "emcp")))
-                           (path (expand-file-name "emacs.svg" emcp-dir))
-                           ((file-readable-p path))
-                           (data (with-temp-buffer
-                                   (insert-file-contents path)
-                                   (buffer-string))))
-                 (concat "data:image/svg+xml;base64," (base64-encode-string data t))))
-         (capabilities (emcp--server-capabilities server))
-         (session (list :id (emcp--make-session-id)
-                        :state 'initializing
-                        :created (current-time)
-                        :last-message-time (current-time)
-                        :protocol-version protocol-version
-                        :client-capabilities (gethash "capabilities" params)
-                        :server-capabilities capabilities
-                        :client-info (gethash "clientInfo" params)
-                        :client-channel nil))
-         (response (emcp--jsonrpc-result
-                    request
-                    `((protocolVersion . ,protocol-version)
-                      (capabilities . ,capabilities)
-                      (serverInfo . ((name . "EMCP")
-                                     (title . "EMCP - An MCP server for Emacs")
-                                     (version . "0.1.0")
-                                     (description . "Lets your agent talk to Emacs")
-                                     (websiteUrl . "https://codeberg.org/martenlienen/emcp")
-                                     ,@(when icon
-                                         `((icons . [((mimeType . "image/svg+xml")
-                                                      (sizes . ["any"])
-                                                      (src . ,icon))])))))
-                      (instructions . ,emcp-instructions)))))
-    (emcp--log server (emcp--context-from-session server session)
-      (info (format "New session %s" (plist-get session :id)))
-      (debug (emcp--prefix-lines "| " (emcp--log-pp session))))
-    (emcp--server-add-session server session)
-    (cons session response)))
-
-(defun emcp--server-add-session (server session)
-  "Add a new SESSION to SERVER."
-  (puthash (plist-get session :id) session (emcp--server-sessions server)))
-
-(defun emcp--server-delete-session (server session)
-  "Delete SESSION from SERVER."
-  (remhash (plist-get session :id) (emcp--server-sessions server)))
-
-(defun emcp--server-get-session (server session-id)
-  "Get session with id SESSION-ID from SERVER."
-  (gethash session-id (emcp--server-sessions server)))
-
-(defun emcp--session-touch (session)
-  "Record that SESSION just received a message."
-  (plist-put session :last-message-time (current-time)))
-
-(defun emcp--make-session-id ()
-  "Create a new session id.
-
-This is a copy of `org-id-uuid'."
-  (let ((rnd (md5 (format "%s%s%s%s%s%s%s"
-                          (random)
-                          (current-time)
-                          (user-uid)
-                          (emacs-pid)
-                          (user-full-name)
-                          user-mail-address
-                          (recent-keys)))))
-    (format "%s-%s-4%s-%s%s-%s"
-            (substring rnd 0 8)
-            (substring rnd 8 12)
-            (substring rnd 13 16)
-            (format "%x"
-                    (logior
-                     #b10000000
-                     (logand
-                      #b10111111
-                      (string-to-number
-                       (substring rnd 16 18) 16))))
-            (substring rnd 18 20)
-            (substring rnd 20 32))))
-
-(defun emcp--server-on-client-channel (server session send-notification)
-  "A channel from SERVER to client has been established for SESSION.
-
-The server will call (funcall SEND-NOTIFICATION NOTIFICATION) to send
-JSON-RPC notifications or (funcall SEND-NOTIFICATION nil) to close the
-channel."
-  (emcp--log server (emcp--context-from-session server session)
-    (info (format "Client channel established (%s)" (plist-get session :id))))
-  (when-let* ((channel (plist-get session :client-channel)))
-    ;; Close the previous channel
-    (funcall channel nil))
-  (plist-put session :client-channel send-notification))
-
-(defun emcp--server-on-client-channel-closed (_server session)
-  "The client channel of SESSION on SERVER has been closed."
-  (plist-put session :client-channel nil))
-
-(cl-defun emcp--server-send-notification (server session method &key params)
-  "Send a JSON-RPC notification to the SESSION client on SERVER.
-
-METHOD is the notification method and PARAMS are its optional parameters."
-  (when-let* ((channel (plist-get session :client-channel)))
-    (emcp--log server (emcp--context-from-session server session)
-      (info (format "< Notification %s" method))
-      (debug (if params
-                 (emcp--prefix-lines "< " (emcp--log-pp params))
-               "No parameters")))
-    (funcall channel (emcp--jsonrpc-notification method params))))
-
-(defun emcp--server-on-request (server session request send-response)
-  "Handle the MCP JSON-RPC2.0 request REQUEST on SERVER in SESSION.
-
+CONTEXT is the value of `emcp--request-context' for REQUEST.
 SEND-RESPONSE is called with the response alist."
-  (emcp--session-touch session)
-  (let ((context (emcp--context-from-session server session (gethash "id" request))))
-    (emcp--log server context
-      (info
-       (let* ((method (gethash "method" request))
-              (params (gethash "params" request))
-              (detail (pcase method
-                        ((or "tools/call" "prompts/get") (gethash "name" params))
-                        ((or "resources/read" "resources/subscribe" "resources/unsubscribe")
-                         (gethash "uri" params)))))
-         (format "> Request %s%s (%s)"
-                 method
-                 (if detail (format " %s" detail) "")
-                 (gethash "id" request))))
-      (debug (if-let* ((params (gethash "params" request)))
-                 (emcp--prefix-lines "> " (emcp--log-pp (emcp--to-alist params)))
-               "No parameters")))
-    (cl-flet ((log-and-send (response)
-                (emcp--log server context
-                  (info (format "Response %s (%s)"
-                                (if (alist-get 'error response) "error" "ok")
-                                (alist-get 'id response)))
-                  (debug (emcp--prefix-lines "< " (emcp--log-pp
-                                                   (or (alist-get 'result response)
-                                                       (alist-get 'error response))))))
-                (funcall send-response response)))
-      (handler-bind
-          ;; Last resort response in case an error interrupts request handling
-          ((error
-            (lambda (err)
+  (emcp--log server context
+    (info
+     (let* ((method (gethash "method" request))
+            (params (gethash "params" request))
+            (detail (pcase method
+                      ((or "tools/call" "prompts/get") (gethash "name" params))
+                      ("resources/read" (gethash "uri" params)))))
+       (format "> Request %s%s (%s)"
+               method
+               (if detail (format " %s" detail) "")
+               (gethash "id" request))))
+    (debug (if-let* ((params (gethash "params" request)))
+               (emcp--prefix-lines "> " (emcp--log-pp (emcp--to-alist params)))
+             "No parameters")))
+  (cl-flet ((log-and-send (response)
               (emcp--log server context
-                (error (format "Error during request handling:\n%s"
-                               (emcp--prefix-lines "| " (error-message-string err)))))
-              (ignore-errors
-                (log-and-send (emcp--jsonrpc-error
-                               request
-                               emcp--jsonrpc-internal-error
-                               "Internal server error"))))))
-        (pcase (gethash "method" request)
-          ("prompts/list"
-           (emcp--server-request--prompts-list server context request #'log-and-send))
-          ("prompts/get"
-           (emcp--server-request--prompts-get server context request #'log-and-send))
-          ("resources/list"
-           (emcp--server-request--resources-list server context request #'log-and-send))
-          ("resources/templates/list"
-           (emcp--server-request--resources-templates-list server context request #'log-and-send))
-          ("resources/read"
-           (emcp--server-request--resources-read server context request #'log-and-send))
-          ("tools/list"
-           (emcp--server-request--tools-list server context request #'log-and-send))
-          ("tools/call"
-           (emcp--server-request--tools-call server context request #'log-and-send))
-          (_ (log-and-send (emcp--jsonrpc-error
-                            request
-                            emcp--jsonrpc-method-not-found
-                            "Method not found"))))))))
+                (info (format "Response %s (%s)"
+                              (if (alist-get 'error response) "error" "ok")
+                              (alist-get 'id response)))
+                (debug (emcp--prefix-lines "< " (emcp--log-pp
+                                                 (or (alist-get 'result response)
+                                                     (alist-get 'error response))))))
+              (funcall send-response response)))
+    (handler-bind
+        ;; Last resort response in case an error interrupts request handling
+        ((error
+          (lambda (err)
+            (emcp--log server context
+              (error (format "Error during request handling:\n%s"
+                             (emcp--prefix-lines "| " (error-message-string err)))))
+            (ignore-errors
+              (log-and-send (emcp--jsonrpc-error
+                             request
+                             emcp--jsonrpc-internal-error
+                             "Internal server error"))))))
+      (pcase (gethash "method" request)
+        ("server/discover"
+         (emcp--server-request--discover server context request #'log-and-send))
+        ("prompts/list"
+         (emcp--server-request--prompts-list server context request #'log-and-send))
+        ("prompts/get"
+         (emcp--server-request--prompts-get server context request #'log-and-send))
+        ("resources/list"
+         (emcp--server-request--resources-list server context request #'log-and-send))
+        ("resources/templates/list"
+         (emcp--server-request--resources-templates-list server context request #'log-and-send))
+        ("resources/read"
+         (emcp--server-request--resources-read server context request #'log-and-send))
+        ("tools/list"
+         (emcp--server-request--tools-list server context request #'log-and-send))
+        ("tools/call"
+         (emcp--server-request--tools-call server context request #'log-and-send))
+        (_ (log-and-send (emcp--jsonrpc-error
+                          request
+                          emcp--jsonrpc-method-not-found
+                          "Method not found")))))))
+
+(defun emcp--server-request--discover (server _context request send-response)
+  "Describe SERVER and its capabilities.
+
+SEND-RESPONSE is called with the response to REQUEST."
+  (funcall send-response
+           (emcp--mcp-result
+            request
+            (emcp--mcp-cacheable
+             `((supportedVersions . ,(vconcat emcp-supported-versions))
+               (capabilities . ,(emcp--server-capabilities server))
+               (instructions . ,emcp-instructions)
+               (_meta . ((io.modelcontextprotocol/serverInfo
+                          . (,@emcp--mcp-server-info
+                             ,@(when emcp--mcp-server-icons
+                                 `((icons . ,emcp--mcp-server-icons))))))))
+             emcp-list-ttl-ms "public"))))
 
 (defun emcp--server-request--prompts-list (server _context request send-response)
   "List all prompt definitions on SERVER.
@@ -568,21 +570,25 @@ SEND-RESPONSE is called with the response to REQUEST."
          (descriptions (cl-loop for prompt being the hash-values of prompts
                                 collect (plist-get (get prompt 'emcp-prompt) :metadata))))
     (funcall send-response
-             (emcp--jsonrpc-result request `((prompts . ,(vconcat descriptions)))))))
+             (emcp--mcp-result
+              request (emcp--mcp-cacheable `((prompts . ,(vconcat descriptions)))
+                                           emcp-list-ttl-ms "public")))))
 
 (defun emcp--server-request--prompts-get (server context request send-response)
   "Execute a prompt on SERVER with request CONTEXT.
 
 SEND-RESPONSE is called with the response to REQUEST."
   (let* ((params (gethash "params" request))
-         (name (gethash "name" params))
+         (name (and (hash-table-p params) (gethash "name" params)))
          (prompt (gethash name (emcp--server-prompts server)))
-         (args (gethash "arguments" params)))
+         (args (and (hash-table-p params) (gethash "arguments" params))))
     (cl-flet ((send-result (result)
-                (funcall send-response (emcp--jsonrpc-result request result)))
+                (funcall send-response (emcp--mcp-result request result)))
               (send-error (code message &optional data)
                 (funcall send-response (emcp--jsonrpc-error request code message data))))
-      (funcall prompt server context #'send-result #'send-error args))))
+      (if prompt
+          (funcall prompt server context #'send-result #'send-error args)
+        (send-error emcp--jsonrpc-invalid-params (format "Unknown prompt: %s" name))))))
 
 (defun emcp--server-request--resources-list (server _context request send-response)
   "List all static resources on SERVER.
@@ -592,7 +598,9 @@ SEND-RESPONSE is called with the response to REQUEST."
          (descriptions (cl-loop for sym being the hash-values of resources
                                 collect (plist-get (get sym 'emcp-resource) :metadata))))
     (funcall send-response
-             (emcp--jsonrpc-result request `((resources . ,(vconcat descriptions)))))))
+             (emcp--mcp-result
+              request (emcp--mcp-cacheable `((resources . ,(vconcat descriptions)))
+                                           emcp-list-ttl-ms "public")))))
 
 (defun emcp--server-request--resources-templates-list (server _context request send-response)
   "List all resource templates on SERVER.
@@ -602,8 +610,9 @@ SEND-RESPONSE is called with the response to REQUEST."
          (descriptions (cl-loop for sym being the hash-values of templates
                                 collect (plist-get (get sym 'emcp-resource-template) :metadata))))
     (funcall send-response
-             (emcp--jsonrpc-result
-              request `((resourceTemplates . ,(vconcat descriptions)))))))
+             (emcp--mcp-result
+              request (emcp--mcp-cacheable `((resourceTemplates . ,(vconcat descriptions)))
+                                           emcp-list-ttl-ms "public")))))
 
 (defun emcp--server-find-resource-template (server uri)
   "Find a resource template on SERVER matching URI.
@@ -620,28 +629,41 @@ Return (SYMBOL . PARAMS) or nil."
     result))
 
 (defun emcp--server-request--resources-read (server context request send-response)
-  "Read a resource on SERVER with request CONTEXT.
+  "Read a resource on SERVER in the request CONTEXT.
 
-SEND-RESPONSE is called with the response to REQUEST."
+SEND-RESPONSE is called with the response to REQUEST.  Unknown resources
+or resources that signal `emcp-resource-not-found' produce an
+invalid-params response."
   (let* ((params (gethash "params" request))
-         (uri (gethash "uri" params)))
-    (cl-flet ((send-result (result)
-                (funcall send-response (emcp--jsonrpc-result request result)))
-              (send-error (code message &optional data)
-                (funcall send-response (emcp--jsonrpc-error request code message data))))
+         (uri (gethash "uri" params))
+         (static (gethash uri (emcp--server-resources server)))
+         (match (unless static (emcp--server-find-resource-template server uri)))
+         (sym (or static (car match)))
+         (ttl-ms (plist-get (or (get sym 'emcp-resource) (get sym 'emcp-resource-template))
+                            :ttl-ms)))
+    (cl-flet* ((send-error (code message &optional data)
+                 (funcall send-response (emcp--jsonrpc-error request code message data)))
+               (send-result (result)
+                 (funcall send-response
+                          (emcp--mcp-result
+                           request (emcp--mcp-cacheable result ttl-ms "private"))))
+               (not-found ()
+                 (send-error emcp--jsonrpc-invalid-params "Resource not found"
+                             `((uri . ,uri)))))
       (condition-case err
           (cond
            ;; Static resource
-           ((when-let* ((sym (gethash uri (emcp--server-resources server))))
-              (funcall sym server context #'send-result #'send-error uri)))
+           (static
+            (funcall sym server context #'send-result #'send-error uri))
            ;; Resource template
-           ((when-let* ((match (emcp--server-find-resource-template server uri)))
-              (pcase-let ((`(,sym . ,uri-params) match))
-                (funcall sym server context #'send-result #'send-error uri uri-params))))
+           (match
+            (funcall sym server context #'send-result #'send-error uri (cdr match)))
            (t
-            (send-error -32002 (format "No resource found for URI: %s" uri))))
+            (not-found)))
+        (emcp-resource-not-found
+         (not-found))
         (error
-         (send-error -32002 (error-message-string err)))))))
+         (send-error emcp--jsonrpc-internal-error (error-message-string err)))))))
 
 (defun emcp--server-request--tools-list (server _context request send-response)
   "List all tool definitions on SERVER.
@@ -651,44 +673,27 @@ SEND-RESPONSE is called with the response to REQUEST."
          (descriptions (cl-loop for tool being the hash-values of tools
                                 collect (plist-get (get tool 'emcp-tool) :metadata))))
     (funcall send-response
-             (emcp--jsonrpc-result request `((tools . ,(vconcat descriptions)))))))
+             (emcp--mcp-result
+              request (emcp--mcp-cacheable `((tools . ,(vconcat descriptions)))
+                                           emcp-list-ttl-ms "public")))))
 
 (defun emcp--server-request--tools-call (server context request send-response)
   "Execute a tool on SERVER with request CONTEXT.
 
 SEND-RESPONSE is called with the response to REQUEST."
   (let* ((params (gethash "params" request))
-         (name (gethash "name" params))
+         (name (and (hash-table-p params) (gethash "name" params)))
          (tool (gethash name (emcp--server-tools server)))
-         (args (gethash "arguments" params)))
+         (args (and (hash-table-p params) (gethash "arguments" params))))
     (cl-flet ((send-result (result)
-                (funcall send-response (emcp--jsonrpc-result request result)))
+                (funcall send-response (emcp--mcp-result request result)))
               (send-error (code message &optional data)
                 (funcall send-response (emcp--jsonrpc-error request code message data))))
-      (funcall tool server context #'send-result #'send-error args))))
+      (if tool
+          (funcall tool server context #'send-result #'send-error args)
+        (send-error emcp--jsonrpc-invalid-params (format "Unknown tool: %s" name))))))
 
-(defun emcp--server-on-notification (server session request)
-  "Handle the MCP JSON-RPC2.0 notification REQUEST on SERVER in SESSION."
-  (emcp--session-touch session)
-  (let ((context (emcp--context-from-session server session)))
-    (emcp--log server context
-      (info (format "> Notification %s" (gethash "method" request)))
-      (debug (when-let* ((params (gethash "params" request)))
-               (emcp--prefix-lines "> " (emcp--log-pp (emcp--to-alist params))))))
-    (handler-bind
-        ((error
-          (lambda (err)
-            (emcp--log server context
-              (error (format "Error during notification handling:\n%s"
-                             (emcp--prefix-lines "| " (error-message-string err))))))))
-      (pcase (gethash "method" request)
-        ("notifications/initialized"
-         (when (eq (plist-get session :state) 'initializing)
-           (plist-put session :state 'up)
-           (emcp--log server context
-             (debug "Initialization complete"))))))))
-
-;;; Capability defining macros
+;;; Primitive defining macros
 
 (defmacro emcp-deftool (name args docstring &rest body)
   "Define NAME as an MCP tool.
@@ -705,8 +710,8 @@ The following keyword options may appear before BODY:
  :name MCP tool name (default NAME).
  :title MCP tool title.
  :description MCP tool description (default DOCSTRING).
- :async When non-nil, BODY handles responses manually via locally bound
-        functions `send-result' and `send-error'.  When nil, BODY
+ :async When non-nil, BODY sends its result or error via the locally
+        bound functions `send-result' and `send-error'.  When nil, BODY
         returns a tool result directly.
 
 When the client calls the tool, execute BODY to produce a result.  In
@@ -726,7 +731,7 @@ send a result or error:
 
 RESULT is a tool call result JSON document (an alist) as described in the
 spec, see this URL
-https://modelcontextprotocol.io/specification/2025-11-25/server/tools"
+https://modelcontextprotocol.io/specification/2026-07-28/server/tools"
   (declare (indent 2) (debug (symbolp sexp stringp body)))
   ;; Parse keyword options before body
   (let (mcp-name mcp-title mcp-description async-p)
@@ -803,29 +808,28 @@ The following keyword options may appear before BODY:
  :name MCP prompt name (default NAME).
  :title MCP prompt title.
  :description MCP prompt description (default DOCSTRING).
- :async When non-nil, BODY handles responses manually via locally bound
-	      functions `send-result' and `send-error'.  When nil, BODY
-	      returns a prompt directly.
+ :async When non-nil, BODY sends its result or error via the locally
+        bound functions `send-result' and `send-error'.  When nil, BODY
+        returns a prompt result directly.
 
-When the client requests the prompt, execute BODY to produce a
-prompt.  In addition to the declared ARGS, the following symbols are
-bound:
+When the client requests the prompt, execute BODY to produce a result.
+In addition to the declared ARGS, the following symbols are bound:
 
  `server': The MCP server.
  `context': The `emcp-context' of the request.
 
-If :async is nil or not provided, BODY just returns a prompt as defined
-in the MCP specification.  If :async is non-nil, the following functions
-are bound and BODY has to call exactly one of them once to send a prompt
-or error:
+If :async is nil or not provided, BODY just returns a prompt result as
+defined in the MCP specification.  If :async is non-nil, the following
+functions are bound and BODY has to call exactly one of them once to
+send a result or error:
 
- `send-result' (PROMPT): Send the generated PROMPT to the client.
+ `send-result' (RESULT): Send the prompt RESULT to the client.
  `send-error' (CODE MESSAGE &optional DATA): Signal an error to the
  client with error code CODE, MESSAGE and optional error DATA.
 
-RESULT is a prompt/get result JSON document (an alist) as described in the
+RESULT is a prompts/get result JSON document (an alist) as described in the
 spec, see this URL
-https://modelcontextprotocol.io/specification/2025-11-25/server/prompts"
+https://modelcontextprotocol.io/specification/2026-07-28/server/prompts"
   (declare (indent 2) (debug (symbolp sexp stringp body)))
   ;; Parse keyword options before body
   (let (mcp-name mcp-title mcp-description async-p)
@@ -896,8 +900,10 @@ The following keyword options may appear before BODY:
  :title MCP resource title.
  :description MCP resource description (default DOCSTRING).
  :mime-type MIME type of the resource content.
- :async When non-nil, BODY handles responses manually via locally bound
-        functions `send-result' and `send-error'.  When nil, BODY
+ :ttl-ms How many milliseconds clients may cache a read result
+         (default 0).  Results are always cached privately.
+ :async When non-nil, BODY sends its result or error via the locally
+        bound functions `send-result' and `send-error'.  When nil, BODY
         returns a resource result directly.
 
 When the client reads the resource, execute BODY to produce a result.
@@ -919,15 +925,20 @@ one of them once to send a result or error:
 
 RESULT is a resources/read result JSON document (an alist) as described
 in the spec, see this URL
-https://modelcontextprotocol.io/specification/2025-11-25/server/resources"
+https://modelcontextprotocol.io/specification/2026-07-28/server/resources
+
+To report that the requested resource does not exist, BODY signals
+`emcp-resource-not-found'.  Any other error is reported to the client as
+an internal error."
   (declare (indent 2) (debug (symbolp stringp stringp body)))
-  (let (mcp-name mcp-title mcp-description mime-type async-p)
+  (let (mcp-name mcp-title mcp-description mime-type (ttl-ms 0) async-p)
     (while (keywordp (car body))
       (pcase (pop body)
         (:name (setq mcp-name (pop body)))
         (:title (setq mcp-title (pop body)))
         (:description (setq mcp-description (pop body)))
         (:mime-type (setq mime-type (pop body)))
+        (:ttl-ms (setq ttl-ms (pop body)))
         (:async (setq async-p (pop body)))))
     (unless mcp-name
       (setq mcp-name (symbol-name name)))
@@ -953,7 +964,8 @@ https://modelcontextprotocol.io/specification/2025-11-25/server/resources"
                     (list :name ,uri-or-template
                           :metadata ',metadata
                           :match (emcp-uri--compile-template
-                                  ,uri-or-template)))
+                                  ,uri-or-template)
+                          :ttl-ms ,ttl-ms))
                (defun ,name (server context ,send-result-var ,send-error-var uri ,params-var)
                  ,docstring
                  (ignore server context uri)
@@ -969,7 +981,7 @@ https://modelcontextprotocol.io/specification/2025-11-25/server/resources"
           ;; Static resource
           `(progn
              (put ',name 'emcp-resource
-                  '(:name ,uri-or-template :metadata ,metadata))
+                  (list :name ,uri-or-template :metadata ',metadata :ttl-ms ,ttl-ms))
              (defun ,name (server context ,send-result-var ,send-error-var uri)
                ,docstring
                (ignore server context uri)

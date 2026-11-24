@@ -41,7 +41,7 @@
     (let ((emcp-tools-send-keys-default-policy t))
       (should (eq (emcp-tools-send-keys--authorize server) nil)))))
 
-(ert-deftest emcp-tests-send-keys-authorize-default ()
+(ert-deftest emcp-tests-send-keys-authorize-default-policy ()
   (emcp-test-with-server server (emcp--server-build)
     (let ((emcp-tools-send-keys-default-policy t))
       (should (eq (emcp-tools-send-keys--authorize server) t)))
@@ -95,13 +95,13 @@
       (kill-buffer buf))))
 
 (ert-deftest emcp-tests-send-keys-execute-window-dead ()
-  ;; A dead target window yields an error response without executing keys.
-  (let ((response nil)
+  ;; A dead target window yields an error result without executing keys.
+  (let ((result nil)
         (win (split-window)))
     (delete-window win)
     (emcp-tools-send-keys--execute "h e l l o" win
-                                   (lambda (r) (setq response r)))
-    (should (eq (alist-get 'isError response) t))))
+                                   (lambda (r) (setq result r)))
+    (should (eq (alist-get 'isError result) t))))
 
 (provide 'emcp-tools-send-keys-tests)
 ;;; emcp-tools-send-keys-tests.el ends here

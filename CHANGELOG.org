@@ -3,6 +3,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [[https://keepachangelog.com/en/1.0.0/][Keep a Changelog]].
 * Unreleased
+The major change in this version is that *EMCP now speaks version 2026-07-28* of the MCP spec. If your MCP client only supports the older spec, check out commit a664a410. Unfortunately, supporting both is not viable, because the protocol went through a significant architectural change from stateful to stateless.
+** Added
+- Resource bodies can signal =emcp-resource-not-found= to report a missing resource.
 ** Changed
+- EMCP speaks MCP 2026-07-28 and requires a client that supports it. This comes with several changes that mirror differences in the spec versions, such as =MCP-Protocol-Version=, =Mcp-Method= and =Mcp-Name= headers, a different error code (=-32602= instead of =-32002=) for missing resources, a new =server/discover= method and optional caching hints for clients.
 - The accept/reject modes of the =eval= and =send-keys= tools apply to the whole server instead of a single session. Choosing "Always accept" or "Always reject" in a confirmation buffer now affects all clients connected to that server, and the session manager shows and cycles (=e=, =K=) the modes per server.
 - The session manager is replaced by a server manager, =M-x emcp-server-manager=, which lists the running servers alphabetically with their log buffer and tool modes.
+** Removed
+- Sessions and the =initialize= handshake. The HTTP transport no longer issues =Mcp-Session-Id= and answers =GET= and =DELETE= requests with =405 Method Not Allowed=.
+** Fixed
+- Calling an unknown tool or prompt returns error code =-32602= instead of an internal error.

@@ -240,9 +240,9 @@ Tools:
 :CUSTOM_ID: profile-develop
 :END:
 
-Capabilities for developing Emacs lisp.
+Primitives for developing Emacs lisp.
 
-This gives the agent additional capabilities to work with Emacs and
+This gives the agent additional abilities to work with Emacs and
 inspect its current state like:
 1. Taking screenshots
 2. Reading and setting variables
@@ -353,7 +353,7 @@ Keyword options:
           `((contents . [((uri . ,uri)
                           (mimeType . "text/plain")
                           (text . ,text))])))
-      (error "Buffer %s does not exist" name)))
+      (signal 'emcp-resource-not-found (list name))))
 #+end_src
 
 The resource body returns a ~resources/read~ result alist. In addition to template parameters, ~server~, ~session~ and ~uri~ (the full request URI) are bound.
@@ -542,7 +542,7 @@ Share screenshots of all visible Emacs frames.
 #+end_src
 
 # begin:resources
-*** =info://{manual}/{node}= [[./emcp-resources.el::158][~emcp-resource-info-node~]]
+*** =info://{manual}/{node}= [[./emcp-resources.el::161][~emcp-resource-info-node~]]
 :PROPERTIES:
 :CUSTOM_ID: resource-info-node
 :END:
@@ -878,7 +878,7 @@ Default: ~emcp-confirm-notify-default~
 
 Default: ~nil~
 
-** [[./emcp-http.el::31][~emcp-http-host~]]
+** [[./emcp-http.el::33][~emcp-http-host~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-http-host
 :END:
@@ -887,7 +887,7 @@ Default: ~nil~
 
 Default: ~"127.0.0.1"~
 
-** [[./emcp-http.el::43][~emcp-http-path~]]
+** [[./emcp-http.el::45][~emcp-http-path~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-http-path
 :END:
@@ -896,7 +896,7 @@ Default: ~"127.0.0.1"~
 
 Default: ~"/mcp"~
 
-** [[./emcp-http.el::36][~emcp-http-port~]]
+** [[./emcp-http.el::38][~emcp-http-port~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-http-port
 :END:
@@ -907,18 +907,30 @@ Default: ~"/mcp"~
 
 Default: ~t~
 
-** [[./emcp-core.el::39][~emcp-instructions~]]
+** [[./emcp-core.el::46][~emcp-instructions~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-instructions
 :END:
 
-: Instructions to send to clients during initialization.
+: Instructions for clients discovering the server.
 :
 : Should describe the overall purpose of the server.
 
 Default: ~"Inspect and control the user's running Emacs.\n\nUse this when you are\n- answering questions about Emacs,\n- debugging Emacs,\n- programming or planning Emacs Lisp,\n- looking up Emacs Lisp files,\n- or controlling an Emacs instance.\n\nPrefer this server over file operations or shell commands when working in an Emacs context."~
 
-** [[./emcp-core.el::70][~emcp-log-level~]]
+** [[./emcp-core.el::65][~emcp-list-ttl-ms~]]
+:PROPERTIES:
+:CUSTOM_ID: custom-emcp-list-ttl-ms
+:END:
+
+: Milliseconds for which clients may cache lists and server/discover results.
+:
+: This is the cache hint for the results of tools/list, prompts/list,
+: resources/list, resources/templates/list and server/discover.
+
+Default: ~60000~
+
+** [[./emcp-core.el::82][~emcp-log-level~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-log-level
 :END:
@@ -948,7 +960,7 @@ Default:
 			      emcp-tools-find-references
 			      emcp-tools-info-search))
  (develop :description
-	  "Capabilities for developing Emacs lisp.\n\nThis gives the agent additional capabilities to work with Emacs and\ninspect its current state like:\n1. Taking screenshots\n2. Reading and setting variables"
+	  "Primitives for developing Emacs lisp.\n\nThis gives the agent additional abilities to work with Emacs and\ninspect its current state like:\n1. Taking screenshots\n2. Reading and setting variables"
 	  :include (inspect) :tools
 	  (emcp-tools-get-variable emcp-tools-set-variable
 				   emcp-tools-screenshot))

@@ -1,4 +1,4 @@
-;;; emcp-screenshot.el --- Frame screenshot capabilities for EMCP -*- lexical-binding: t -*-
+;;; emcp-screenshot.el --- Frame screenshot primitives for EMCP -*- lexical-binding: t -*-
 
 ;; Author: Marten Lienen <ml@martenlienen.com>
 

@@ -53,10 +53,10 @@
 
 (ert-deftest emcp-tests-find-definition-function ()
   (emcp-test-with-tool-response response 'emcp-tools-find-definition
-                                '((symbol . "emcp--server-stop"))
+                                '((symbol . "emcp--server-destroy"))
     (let ((text (alist-get 'text (aref (alist-get 'content (alist-get 'result response)) 0))))
       (should (string-match-p "emcp-core\\.el" text))
-      (should (string-match-p "defun emcp--server-stop" text)))))
+      (should (string-match-p "defun emcp--server-destroy" text)))))
 
 (ert-deftest emcp-tests-find-definition-not-found ()
   (emcp-test-with-tool-response response 'emcp-tools-find-definition
@@ -84,24 +84,24 @@ seconds to milliseconds while still exercising the same code paths."
   ;; "function" kind matches call sites and skips the symbol's own `defun'
   ;; definition.
   (emcp-tests-with-emcp-refs-scope
-   (emcp-test-with-tool-response response 'emcp-tools-find-references
-                                 '((symbol . "emcp--server-stop") (kind . "function"))
-     (let* ((result (alist-get 'result response))
-            (text (alist-get 'text (aref (alist-get 'content result) 0))))
-       (should-not (alist-get 'isError result))
-       (should (string-match-p "(emcp--server-stop " text))
-       (should-not (string-match-p "(defun emcp--server-stop" text))))))
+    (emcp-test-with-tool-response response 'emcp-tools-find-references
+                                  '((symbol . "emcp--server-destroy") (kind . "function"))
+      (let* ((result (alist-get 'result response))
+             (text (alist-get 'text (aref (alist-get 'content result) 0))))
+        (should-not (alist-get 'isError result))
+        (should (string-match-p "(emcp--server-destroy " text))
+        (should-not (string-match-p "(defun emcp--server-destroy" text))))))
 
 (ert-deftest emcp-tests-find-references-any ()
   ;; "any" kind matches every occurrence regardless of syntactic position, so
   ;; it includes the `defun' definition line that "function" skips.
   (emcp-tests-with-emcp-refs-scope
-   (emcp-test-with-tool-response response 'emcp-tools-find-references
-                                 '((symbol . "emcp--server-stop"))
-     (let* ((result (alist-get 'result response))
-            (text (alist-get 'text (aref (alist-get 'content result) 0))))
-       (should-not (alist-get 'isError result))
-       (should (string-match-p "(defun emcp--server-stop" text))))))
+    (emcp-test-with-tool-response response 'emcp-tools-find-references
+                                  '((symbol . "emcp--server-destroy"))
+      (let* ((result (alist-get 'result response))
+             (text (alist-get 'text (aref (alist-get 'content result) 0))))
+        (should-not (alist-get 'isError result))
+        (should (string-match-p "(defun emcp--server-destroy" text))))))
 
 (ert-deftest emcp-tests-find-references-max-lines ()
   ;; emcp--server-build is called with a multi-line argument list in emcp.el,
@@ -110,41 +110,41 @@ seconds to milliseconds while still exercising the same code paths."
   ;; the first line of the matched form.
   (let ((emcp-tools-find-references-max-lines 1))
     (emcp-tests-with-emcp-refs-scope
-     (emcp-test-with-tool-response response 'emcp-tools-find-references
-                                   '((symbol . "emcp--server-build") (kind . "function"))
-       (let* ((result (alist-get 'result response))
-              (text (alist-get 'text (aref (alist-get 'content result) 0))))
-         (should-not (alist-get 'isError result))
-         (should (string-match-p
-                  "(emcp--server-build :name[^\n]*\n\\.\\.\\."
-                  text)))))))
+      (emcp-test-with-tool-response response 'emcp-tools-find-references
+                                    '((symbol . "emcp--server-build") (kind . "function"))
+        (let* ((result (alist-get 'result response))
+               (text (alist-get 'text (aref (alist-get 'content result) 0))))
+          (should-not (alist-get 'isError result))
+          (should (string-match-p
+                   "(emcp--server-build :name[^\n]*\n\\.\\.\\."
+                   text)))))))
 
 (ert-deftest emcp-tests-find-references-not-found ()
   (emcp-tests-with-emcp-refs-scope
-   (emcp-test-with-tool-response response 'emcp-tools-find-references
-                                 '((symbol . "emcp--this-does-not-exist-at-all"))
-     (let* ((result (alist-get 'result response))
-            (text (alist-get 'text (aref (alist-get 'content result) 0))))
-       (should (eq (alist-get 'isError result) t))
-       (should (string-match-p "No symbol named" text))))))
+    (emcp-test-with-tool-response response 'emcp-tools-find-references
+                                  '((symbol . "emcp--this-does-not-exist-at-all"))
+      (let* ((result (alist-get 'result response))
+             (text (alist-get 'text (aref (alist-get 'content result) 0))))
+        (should (eq (alist-get 'isError result) t))
+        (should (string-match-p "No symbol named" text))))))
 
 (ert-deftest emcp-tests-find-references-no-matches ()
   ;; A bound symbol that nothing references.
   (let ((sym (make-symbol "emcp-tests--orphan-but-interned")))
     (intern (symbol-name sym))
     (emcp-tests-with-emcp-refs-scope
-     (emcp-test-with-tool-response response 'emcp-tools-find-references
-                                   `((symbol . ,(symbol-name sym)))
-       (let* ((result (alist-get 'result response))
-              (text (alist-get 'text (aref (alist-get 'content result) 0))))
-         (should-not (alist-get 'isError result))
-         (should (string-match-p "No references to" text)))))))
+      (emcp-test-with-tool-response response 'emcp-tools-find-references
+                                    `((symbol . ,(symbol-name sym)))
+        (let* ((result (alist-get 'result response))
+               (text (alist-get 'text (aref (alist-get 'content result) 0))))
+          (should-not (alist-get 'isError result))
+          (should (string-match-p "No references to" text)))))))
 
 (ert-deftest emcp-tests-describe-function ()
   (emcp-test-with-tool-response response 'emcp-tools-describe
-                                '((symbol . "emcp--server-stop") (kind . "function"))
+                                '((symbol . "emcp--server-destroy") (kind . "function"))
     (let ((text (alist-get 'text (aref (alist-get 'content (alist-get 'result response)) 0))))
-      (should (string-match-p "Stop SERVER" text)))))
+      (should (string-match-p "Release the resources of SERVER" text)))))
 
 (ert-deftest emcp-tests-describe-any ()
   ;; emcp-log-level is both a variable and a constant

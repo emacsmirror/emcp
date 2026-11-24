@@ -29,10 +29,10 @@
 
 (ert-deftest emcp-tests-resource-template-list ()
   (emcp-test-with-server server (emcp--server-build :resources '(emcp-resource-info-node))
-    (let ((client (emcp-test-client-init-session server)))
+    (let ((client (emcp-test-make-client :server server)))
       (emcp-test-client-with-response client response
                                       '((method . "resources/templates/list"))
-        (let* ((result (alist-get 'result response))
+        (let* ((result (emcp-test-response-data response))
                (templates (alist-get 'resourceTemplates result)))
           (should (= (length templates) 1))
           (should (equal (alist-get 'uriTemplate (aref templates 0))
@@ -40,11 +40,11 @@
 
 (ert-deftest emcp-tests-resource-read-info ()
   (emcp-test-with-server server (emcp--server-build :resources '(emcp-resource-info-node))
-    (let ((client (emcp-test-client-init-session server)))
+    (let ((client (emcp-test-make-client :server server)))
       (emcp-test-client-with-response client response
                                       '((method . "resources/read")
                                         (params . ((uri . "info://elisp/Top"))))
-        (let* ((result (alist-get 'result response))
+        (let* ((result (emcp-test-response-data response))
                (contents (alist-get 'contents result))
                (text (alist-get 'text (aref contents 0))))
           (should (string-match-p "Emacs Lisp" text)))))))

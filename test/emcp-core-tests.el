@@ -19,7 +19,7 @@
 
 ;;; Commentary:
 
-;; Tests for the capability macros and the request handling in emcp-core.el.
+;; Tests for the primitive macros and the request handling in emcp-core.el.
 
 ;;; Code:
 
@@ -43,9 +43,9 @@
                                     (text . ,(format "Hello, I am %s. Pretend this was in %s." name lang)))))]))))
 
     (emcp-test-with-server server (emcp--server-build :prompts (list sym))
-      (let ((client (emcp-test-client-init-session server)))
+      (let ((client (emcp-test-make-client :server server)))
         (emcp-test-client-with-response client response '((method . "prompts/list"))
-          (should (equal (alist-get 'result response)
+          (should (equal (emcp-test-response-data response)
                          '((prompts . [((name . "hello")
                                         (title "say hello")
                                         (description . "Greets the user.")
@@ -61,14 +61,14 @@
                                           (params . ((name . "hello")
                                                      (arguments . ((name . "Emacs")
                                                                    (lang . "Spanish"))))))
-          (should (equal (alist-get 'result response)
+          (should (equal (emcp-test-response-data response)
                          `((description . ,(format "A pretend greeting in Spanish" lang))
                            (messages . [((role . "user")
                                          (content . ((type . "text")
                                                      (text . "Hello, I am Emacs. Pretend this was in Spanish."))))])))))))))
 
-(ert-deftest emcp-tests-sync-prompt-with-defaults ()
-  (let ((sym (make-symbol "async-prompt")))
+(ert-deftest emcp-tests-sync-prompt-minimal ()
+  (let ((sym (make-symbol "minimal-prompt")))
     (eval
      `(emcp-defprompt ,sym ((name) lang)
         "A minimal prompt."
@@ -78,20 +78,20 @@
                                     (text . ,(format "Hello, I am %s. Pretend this was in %s." name lang)))))]))))
 
     (emcp-test-with-server server (emcp--server-build :prompts (list sym))
-      (let ((client (emcp-test-client-init-session server)))
+      (let ((client (emcp-test-make-client :server server)))
         (emcp-test-client-with-response client response
                                         `((method . "prompts/get")
                                           (params . ((name . ,(symbol-name sym))
                                                      (arguments . ((name . "Emacs")
                                                                    (lang . "Spanish"))))))
-          (should (equal (alist-get 'result response)
+          (should (equal (emcp-test-response-data response)
                          `((description . ,(format "A pretend greeting in Spanish" lang))
                            (messages . [((role . "user")
                                          (content . ((type . "text")
                                                      (text . "Hello, I am Emacs. Pretend this was in Spanish."))))])))))))))
 
 (ert-deftest emcp-tests-async-prompt ()
-  (let ((sym (make-symbol "sync-prompt")))
+  (let ((sym (make-symbol "async-prompt")))
     (eval
      `(emcp-defprompt ,sym ((name) lang)
         "A minimal prompt."
@@ -104,13 +104,13 @@
                                                    (text . ,(format "Hello, I am %s. Pretend this was in %s." name lang)))))]))))))
 
     (emcp-test-with-server server (emcp--server-build :prompts (list sym))
-      (let ((client (emcp-test-client-init-session server)))
+      (let ((client (emcp-test-make-client :server server)))
         (emcp-test-client-with-response client response
                                         `((method . "prompts/get")
                                           (params . ((name . ,(symbol-name sym))
                                                      (arguments . ((name . "Emacs")
                                                                    (lang . "Spanish"))))))
-          (should (equal (alist-get 'result response)
+          (should (equal (emcp-test-response-data response)
                          `((description . ,(format "A pretend greeting in Spanish" lang))
                            (messages . [((role . "user")
                                          (content . ((type . "text")
@@ -142,9 +142,9 @@
                        (text . ,(format "%s says %s" name (+ a b))))]))))
 
     (emcp-test-with-server server (emcp--server-build :tools (list sym))
-      (let ((client (emcp-test-client-init-session server)))
+      (let ((client (emcp-test-make-client :server server)))
         (emcp-test-client-with-response client response '((method . "tools/list"))
-          (should (equal (alist-get 'result response)
+          (should (equal (emcp-test-response-data response)
                          '((tools . [((name . "magic-add")
                                       (title . "Add things")
                                       (description . "Somebody is performing addition")
@@ -160,12 +160,12 @@
                                         '((method . "tools/call")
                                           (params . ((name . "magic-add")
                                                      (arguments . ((a . 10))))))
-          (should (equal (alist-get 'result response)
+          (should (equal (emcp-test-response-data response)
                          '((content . [((type . "text")
                                         (text . "Emacs says 20"))])))))))))
 
-(ert-deftest emcp-tests-sync-tool-with-defaults ()
-  (let ((sym (make-symbol "add-tool")))
+(ert-deftest emcp-tests-sync-tool-minimal ()
+  (let ((sym (make-symbol "minimal-tool")))
     (eval
      `(emcp-deftool ,sym (name (a :type "number") (b :type "number"))
         "An addition tool."
@@ -173,9 +173,9 @@
                        (text . ,(format "%s says %s" name (+ a b))))]))))
 
     (emcp-test-with-server server (emcp--server-build :tools (list sym))
-      (let ((client (emcp-test-client-init-session server)))
+      (let ((client (emcp-test-make-client :server server)))
         (emcp-test-client-with-response client response '((method . "tools/list"))
-          (should (equal (alist-get 'result response)
+          (should (equal (emcp-test-response-data response)
                          `((tools . [((name . ,(symbol-name sym))
                                       (description . "An addition tool.")
                                       (inputSchema . ((type . "object")
@@ -185,7 +185,7 @@
                                                       (required . ["name" "a" "b"]))))])))))))))
 
 (ert-deftest emcp-tests-async-tool ()
-  (let ((sym (make-symbol "sync-prompt")))
+  (let ((sym (make-symbol "async-tool")))
     (eval
      `(emcp-deftool ,sym (name (a :type "number") (b :type "number"))
         "An addition tool."
@@ -196,14 +196,14 @@
           (send-error 1001 "Addition is hard" `((name . ,name))))))
 
     (emcp-test-with-server server (emcp--server-build :tools (list sym))
-      (let ((client (emcp-test-client-init-session server)))
+      (let ((client (emcp-test-make-client :server server)))
         (emcp-test-client-with-response client response
                                         `((method . "tools/call")
                                           (params . ((name . ,(symbol-name sym))
                                                      (arguments . ((name . "Emacs")
                                                                    (a . 10)
                                                                    (b . 5))))))
-          (should (equal (alist-get 'result response)
+          (should (equal (emcp-test-response-data response)
                          '((content . [((type . "text")
                                         (text . "Emacs says 15"))])))))
 
@@ -231,26 +231,26 @@
                         (text . "Hello from EMCP"))]))))
 
     (emcp-test-with-server server (emcp--server-build :resources (list sym))
-      (let ((client (emcp-test-client-init-session server)))
+      (let ((client (emcp-test-make-client :server server)))
         ;; Should appear in resources/list, not templates/list
         (emcp-test-client-with-response client response
                                         '((method . "resources/list"))
-          (let ((resources (alist-get 'resources (alist-get 'result response))))
+          (let ((resources (alist-get 'resources (emcp-test-response-data response))))
             (should (= (length resources) 1))
             (should (equal (alist-get 'uri (aref resources 0))
                            "emcp://test/greeting"))))
 
         (emcp-test-client-with-response client response
                                         '((method . "resources/templates/list"))
-          (should (equal (alist-get 'resourceTemplates (alist-get 'result response))
+          (should (equal (alist-get 'resourceTemplates (emcp-test-response-data response))
                          [])))
 
         ;; Should be readable
         (emcp-test-client-with-response client response
                                         '((method . "resources/read")
                                           (params . ((uri . "emcp://test/greeting"))))
-          (let ((text (alist-get 'text (aref (alist-get 'contents
-                                                        (alist-get 'result response)) 0))))
+          (let* ((contents (alist-get 'contents (emcp-test-response-data response)))
+                 (text (alist-get 'text (aref contents 0))))
             (should (equal text "Hello from EMCP"))))))))
 
 (ert-deftest emcp-tests-async-resource ()
@@ -267,13 +267,13 @@
                                        (text . ,(format "Hello, %s" name)))]))))))
 
     (emcp-test-with-server server (emcp--server-build :resources (list sym))
-      (let ((client (emcp-test-client-init-session server)))
+      (let ((client (emcp-test-make-client :server server)))
         ;; Successful read
         (emcp-test-client-with-response client response
                                         '((method . "resources/read")
                                           (params . ((uri . "emcp://test/world"))))
-          (let ((text (alist-get 'text (aref (alist-get 'contents
-                                                        (alist-get 'result response)) 0))))
+          (let* ((contents (alist-get 'contents (emcp-test-response-data response)))
+                 (text (alist-get 'text (aref contents 0))))
             (should (equal text "Hello, world"))))
 
         ;; Error path
@@ -317,55 +317,226 @@
                                                       :tools (list tool)
                                                       :prompts (list prompt)
                                                       :resources (list resource))
-      (let ((client (emcp-test-client-init-session
-                     server :client-info '((name . "test-client") (version . "1.0")))))
+      (let ((client (emcp-test-make-client
+                     :server server :client-info '((name . "test-client") (version . "1.0")))))
         (emcp-test-client-with-response client response
                                         `((id . 42)
                                           (method . "tools/call")
                                           (params . ((name . ,(symbol-name tool)))))
-          (should (equal (alist-get 'text (aref (alist-get 'content (alist-get 'result response)) 0))
-                         "test-client 2025-11-25 42 emcp-test")))
+          (let ((content (alist-get 'content (emcp-test-response-data response))))
+            (should (equal (alist-get 'text (aref content 0))
+                           "test-client 2026-07-28 42 emcp-test"))))
         (emcp-test-client-with-response client response
                                         `((id . 43)
                                           (method . "prompts/get")
                                           (params . ((name . ,(symbol-name prompt)))))
-          (let ((message (aref (alist-get 'messages (alist-get 'result response)) 0)))
+          (let ((message (aref (alist-get 'messages (emcp-test-response-data response))
+                               0)))
             (should (equal (alist-get 'text (alist-get 'content message))
-                           "test-client 2025-11-25 43 emcp-test"))))
+                           "test-client 2026-07-28 43 emcp-test"))))
         (emcp-test-client-with-response client response
                                         '((id . 44)
                                           (method . "resources/read")
                                           (params . ((uri . "emcp://test/context"))))
-          (should (equal (alist-get 'text (aref (alist-get 'contents (alist-get 'result response)) 0))
-                         "test-client 2025-11-25 44 emcp-test")))))))
+          (let ((contents (alist-get 'contents (emcp-test-response-data response))))
+            (should (equal (alist-get 'text (aref contents 0))
+                           "test-client 2026-07-28 44 emcp-test"))))))))
 
 (ert-deftest emcp-tests-log-prefix-client-label ()
   ;; Log lines start with the client name, truncated or padded to a fixed width.
   (emcp-test-with-server server (emcp--server-build)
     (dolist (name '("a-very-long-client-name" "short"))
-      (let ((client (emcp-test-client-init-session server :client-info `((name . ,name)))))
-        (emcp-test-request client "tools/list")))
+      (let ((client (emcp-test-make-client
+                     :server server :client-info `((name . ,name) (version . "1.0")))))
+        (emcp-test-client-request client "tools/list")))
     (with-current-buffer (emcp--server-log-buffer server)
       (let ((log (buffer-string)))
         (should (string-match-p "^[^ ]+ [^ ]+ INFO  a-very-lon > Request tools/list" log))
         (should (string-match-p "^[^ ]+ [^ ]+ INFO  short      > Request tools/list" log))))))
 
-;;; Server notifications
+;;; Request validation
 
-(ert-deftest emcp-tests-send-server-notification ()
+(defun emcp-tests--error-code (response)
+  "Return the error code of RESPONSE."
+  (alist-get 'code (alist-get 'error response)))
+
+(defun emcp-tests--tools-list-request-context (server &rest meta-args)
+  "Return the context of a tools/list request to SERVER.
+
+META-ARGS override or omit _meta fields, see `emcp-test-make-request-meta'."
+  (emcp--request-context
+   server (emcp-test-to-hash-table (apply #'emcp-test-make-request "tools/list" nil meta-args))))
+
+(ert-deftest emcp-tests-request-missing-meta-field ()
+  ;; Both required _meta fields are checked; a malformed field counts as missing.
   (emcp-test-with-server server (emcp--server-build)
-    (let* (notification
-           (client (emcp-test-client-init-session
-                    server
-                    :on-notification (lambda (n) (setq notification n))))
-           (session (emcp-test-client-session client)))
-      (emcp--server-send-notification
-       server session "test/notification"
-       :params '((name . "emcp")))
-      (should (equal notification
-                     '((jsonrpc . "2.0")
-                       (method . "test/notification")
-                       (params . ((name . "emcp")))))))))
+    (dolist (args '((:omit (:protocol-version))
+                    (:omit (:client-capabilities))
+                    (:protocol-version 20260728)
+                    (:client-capabilities "none")))
+      (ert-info ((format "%S" args))
+        (pcase-let ((`(,_ ,code . ,_)
+                     (should-error (apply #'emcp-tests--tools-list-request-context server args)
+                                   :type 'emcp-invalid-request)))
+          (should (= code emcp--jsonrpc-invalid-params)))))))
+
+(ert-deftest emcp-tests-request-unsupported-version ()
+  (emcp-test-with-server server (emcp--server-build)
+    (pcase-let ((`(,_ ,code ,_ ,data)
+                 (should-error (emcp-tests--tools-list-request-context
+                                server :protocol-version "2025-11-25")
+                               :type 'emcp-invalid-request)))
+      (should (= code emcp--mcp-unsupported-protocol-version))
+      (should (equal data '((supported . ["2026-07-28"]) (requested . "2025-11-25")))))))
+
+(ert-deftest emcp-tests-request-log-level ()
+  ;; A log level from the spec is accepted, any other value is invalid
+  ;; params.
+  (emcp-test-with-server server (emcp--server-build)
+    (should (emcp-tests--tools-list-request-context server :log-level "debug"))
+    (pcase-let ((`(,_ ,code . ,_)
+                 (should-error (emcp-tests--tools-list-request-context server :log-level "verbose")
+                               :type 'emcp-invalid-request)))
+      (should (= code emcp--jsonrpc-invalid-params)))))
+
+(ert-deftest emcp-tests-unknown-method ()
+  (emcp-test-with-server server (emcp--server-build)
+    (let ((client (emcp-test-make-client :server server)))
+      (should (= (emcp-tests--error-code
+                  (emcp-test-client-request client "tools/unknown"))
+                 emcp--jsonrpc-method-not-found)))))
+
+(ert-deftest emcp-tests-unknown-tool-or-prompt ()
+  ;; Unknown names are invalid params, see the tools and prompts error
+  ;; handling in the spec
+  (emcp-test-with-server server (apply #'emcp--server-build emcp-test-primitives)
+    (let ((client (emcp-test-make-client :server server)))
+      (pcase-dolist (`(,method ,message) '(("tools/call" "Unknown tool: missing")
+                                           ("prompts/get" "Unknown prompt: missing")))
+        (ert-info (method)
+          (let ((error (alist-get 'error (emcp-test-client-request
+                                          client method '((name . "missing"))))))
+            (should (= (alist-get 'code error) emcp--jsonrpc-invalid-params))
+            (should (equal (alist-get 'message error) message))))))))
+
+;;; Results
+
+(defconst emcp-tests--all-requests
+  '(("server/discover")
+    ("tools/list")
+    ("tools/call" ((name . "tool")))
+    ("prompts/list")
+    ("prompts/get" ((name . "prompt")))
+    ("resources/list")
+    ("resources/templates/list")
+    ("resources/read" ((uri . "emcp://test/static"))))
+  "One (METHOD PARAMS) request for each method that EMCP implements.")
+
+(ert-deftest emcp-tests-results-complete-with-server-info ()
+  (emcp-test-with-server server (apply #'emcp--server-build emcp-test-primitives)
+    (let ((client (emcp-test-make-client :server server)))
+      (pcase-dolist (`(,method ,params) emcp-tests--all-requests)
+        (ert-info (method)
+          (let* ((response (emcp-test-client-request client method params))
+                 (result (alist-get 'result response))
+                 (info (alist-get 'io.modelcontextprotocol/serverInfo (alist-get '_meta result))))
+            (should (equal (alist-get 'resultType result) "complete"))
+            (should (equal (alist-get 'name info) "EMCP"))
+            (should (stringp (alist-get 'version info)))))))))
+
+(ert-deftest emcp-tests-result-meta-merged ()
+  ;; A body's own _meta entries are kept next to the server info.
+  (let ((sym (make-symbol "meta-tool")))
+    (eval `(emcp-deftool ,sym () "A tool with _meta."
+                         '((content . []) (_meta . ((com.example/trace . "abc")))))
+          t)
+    (emcp-test-with-server server (emcp--server-build :tools (list sym))
+      (let* ((client (emcp-test-make-client :server server))
+             (result (alist-get 'result (emcp-test-client-request client "tools/call"
+                                                                  `((name . ,(symbol-name sym))))))
+             (meta (alist-get '_meta result)))
+        (should (equal (alist-get 'com.example/trace meta) "abc"))
+        (should (equal (alist-get 'name (alist-get 'io.modelcontextprotocol/serverInfo meta))
+                       "EMCP"))))))
+
+(ert-deftest emcp-tests-cache-hints ()
+  ;; Lists and discover are public for `emcp-list-ttl-ms', resource
+  ;; reads private for their :ttl-ms.
+  (emcp-test-with-server server (apply #'emcp--server-build emcp-test-primitives)
+    (let ((client (emcp-test-make-client :server server))
+          (emcp-list-ttl-ms 1234))
+      (pcase-dolist (`(,method ,params ,ttl ,scope)
+                     '(("server/discover" nil 1234 "public")
+                       ("tools/list" nil 1234 "public")
+                       ("prompts/list" nil 1234 "public")
+                       ("resources/list" nil 1234 "public")
+                       ("resources/templates/list" nil 1234 "public")
+                       ("resources/read" ((uri . "emcp://test/static")) 0 "private")
+                       ("resources/read" ((uri . "emcp://test/template/1")) 500 "private")))
+        (ert-info ((format "%s %S" method params))
+          (let* ((response (emcp-test-client-request client method params))
+                 (result (alist-get 'result response)))
+            (should (equal (alist-get 'ttlMs result) ttl))
+            (should (equal (alist-get 'cacheScope result) scope))))))))
+
+(ert-deftest emcp-tests-discover ()
+  (emcp-test-with-server server (apply #'emcp--server-build emcp-test-primitives)
+    (let* ((client (emcp-test-make-client :server server))
+           (emcp-instructions "Test instructions")
+           (response (emcp-test-client-request client "server/discover"))
+           (result (alist-get 'result response))
+           (capabilities (alist-get 'capabilities result))
+           (info (alist-get 'io.modelcontextprotocol/serverInfo (alist-get '_meta result))))
+      (should (equal (alist-get 'supportedVersions result) ["2026-07-28"]))
+      (should (assq 'tools capabilities))
+      (should (assq 'prompts capabilities))
+      (should (assq 'resources capabilities))
+      (should (equal (alist-get 'instructions result) "Test instructions"))
+      (should (equal (alist-get 'name info) "EMCP"))
+      (should (string-prefix-p "data:image/svg+xml;base64,"
+                               (alist-get 'src (aref (alist-get 'icons info) 0)))))))
+
+(ert-deftest emcp-tests-tools-list-order ()
+  ;; tools/list follows the profile order, on every call and after a
+  ;; reload.
+  (let ((syms (mapcar #'make-symbol '("zeta" "alpha" "mid"))))
+    (dolist (sym syms)
+      (eval `(emcp-deftool ,sym () "A tool." '((content . []))) t))
+    (cl-flet ((names (client)
+                (mapcar (lambda (tool) (alist-get 'name tool))
+                        (alist-get 'tools (emcp-test-response-data
+                                           (emcp-test-client-request
+                                            client "tools/list"))))))
+      (emcp-test-with-server server (emcp--server-build :tools syms)
+        (let ((client (emcp-test-make-client :server server)))
+          (should (equal (names client) '("zeta" "alpha" "mid")))
+          (should (equal (names client) '("zeta" "alpha" "mid")))
+          (emcp--server-reload server :tools (reverse syms))
+          (should (equal (names client) '("mid" "alpha" "zeta"))))))))
+
+(ert-deftest emcp-tests-resource-read-errors ()
+  ;; A URI that no resource matches and a body that signals
+  ;; `emcp-resource-not-found' return invalid params, any other error
+  ;; that a body signals returns an internal error.
+  (let ((missing (make-symbol "missing"))
+        (broken (make-symbol "broken")))
+    (eval `(progn
+             (emcp-defresource ,missing "emcp://test/missing" "A missing resource."
+                               (signal 'emcp-resource-not-found nil))
+             (emcp-defresource ,broken "emcp://test/broken" "A broken resource."
+                               (error "Broken")))
+          t)
+    (emcp-test-with-server server (emcp--server-build :resources (list missing broken))
+      (let ((client (emcp-test-make-client :server server)))
+        (pcase-dolist (`(,uri ,code)
+                       `(("emcp://test/unknown" ,emcp--jsonrpc-invalid-params)
+                         ("emcp://test/missing" ,emcp--jsonrpc-invalid-params)
+                         ("emcp://test/broken" ,emcp--jsonrpc-internal-error)))
+          (ert-info (uri)
+            (should (= (emcp-tests--error-code
+                        (emcp-test-client-request
+                         client "resources/read" `((uri . ,uri))))
+                       code))))))))
 
 (provide 'emcp-core-tests)
 ;;; emcp-core-tests.el ends here

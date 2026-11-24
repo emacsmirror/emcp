@@ -19,7 +19,9 @@
 
 ;;; Commentary:
 
-;; All code related to the HTTP transport for MCP.
+;; The stateless Streamable HTTP transport of MCP 2026-07-28 [1].
+;;
+;; [1] https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http
 
 ;;; Code:
 
@@ -56,7 +58,7 @@ LOG-LEVEL is the HTTP log level."
                     :on-request (lambda (request send-response)
                                   (funcall #'emcp--http-on-request server request send-response))
                     :log-level log-level
-                    :extra-headers '(MCP-Session-Id MCP-Protocol-Version))))
+                    :extra-headers '(MCP-Protocol-Version Mcp-Method Mcp-Name))))
     (setf (emcp--server-transport server) transport)
     (process-put transport :emcp-path emcp-http-path)
     (emcp--log server nil (info "HTTP transport started"))))
@@ -78,161 +80,200 @@ attacks."
              ;; The parser keeps the brackets of IPv6 hosts and downcases hosts
              (member (url-host url) '("localhost" "127.0.0.1" "[::1]"))))))
 
-(defun emcp--http-on-request (server request send-response)
-  "Process an HTTP REQUEST to SERVER."
-  (emcp--log server nil (trace (emcp--prefix-lines "> " (emcp--log-pp request))))
-  (cl-flet ((invalid-path (path)
-              (emcp--log server nil
-                (warning (format "Invalid request path %s" (emcp--log-escape path))))
-              (funcall send-response '(:status Not-Found)))
-            (forbidden-origin (origin)
-              (emcp--log server nil
-                (warning (format "Forbidden origin %s" (emcp--log-escape origin))))
-              (funcall send-response
-                       `( :status Forbidden
-                          :headers ((Content-Type . "application/json"))
-                          :body ,(json-serialize
-                                  (emcp--jsonrpc-error nil emcp--jsonrpc-invalid-request
-                                                       "Forbidden origin")))))
-            (unexpected-method (method)
-              (emcp--log server nil
-                (debug (format "Unexpected request method %s" method)))
-              (funcall send-response '(:status Method-Not-Allowed)))
-            (no-session-id ()
-              (emcp--log server nil
-                (warning "Missing MCP-Session-Id on non-initialize request"))
-              (funcall send-response '(:status Bad-Request)))
-            (invalid-session-id (session-id)
-              (emcp--log server nil
-                (warning (format "Invalid session ID %s" session-id)))
-              (funcall send-response '(:status Not-Found)))
-            (invalid-request (session request)
-              (emcp--log server (emcp--context-from-session server session)
-                (warning "Invalid JSON-RPC request")
-                (debug (emcp--prefix-lines "> " (emcp--log-pp (emcp--to-alist request)))))
-              (funcall send-response '(:status Bad-Request)))
-            (protocol-versions-match-p (session headers)
-              (let ((header-version (alist-get 'MCP-Protocol-Version headers)))
-                (or (not header-version) (equal header-version (plist-get session :protocol-version)))))
-            (protocol-version-mismatch (session headers)
-              (let ((header-version (alist-get 'MCP-Protocol-Version headers))
-                    (session-version (plist-get session :protocol-version)))
-                (emcp--log server nil
-                  (warning (format "Request protocol version %s, but %s was negotiated"
-                                   header-version session-version))))
-              (funcall send-response '(:status Bad-Request))))
-    (let* ((path (plist-get request :path))
-           (method (plist-get request :method))
-           (headers (plist-get request :headers))
-           (origin (alist-get 'Origin headers))
-           (body (plist-get request :body)))
-      (cond
-       ((not (equal path (process-get (emcp--server-transport server) :emcp-path)))
-        (invalid-path path))
-       ((not (emcp-http--origin-allowed-p origin))
-        (forbidden-origin origin))
-       (t
-        (pcase method
-          ('GET
-           (let* ((session-id (alist-get 'MCP-Session-Id headers))
-                  (session (emcp--server-get-session server session-id)))
-             (cond
-              ((not session-id) (no-session-id))
-              ((not session) (invalid-session-id session-id))
-              ((not (protocol-versions-match-p session headers))
-               (protocol-version-mismatch session headers))
-              (t
-               ;; Open an SSE connection for the server to send notifications
-               (cl-flet ((body (send-chunk)
-                           (cl-flet
-                               ((send-notification (notification)
-                                  (condition-case nil
-                                      (if notification
-                                          (let ((event (encode-coding-string
-                                                        (format "data: %s\n\n" (json-serialize notification))
-                                                        'utf-8)))
-                                            (funcall send-chunk event :keep-open t))
-                                        (funcall send-chunk ""))
-                                    ;; Drop notifications on a closed
-                                    ;; connection
-                                    (http-server-client-disconnected
-                                     (emcp--server-on-client-channel-closed server session)))))
-                             (emcp--server-on-client-channel
-                              server session #'send-notification))))
-                 (funcall send-response
-                          `( :status OK
-                             :headers ((Content-Type . "text/event-stream")
-                                       (Cache-Control . "no-cache"))
-                             :body ,#'body)))))))
-          ('POST
-           (condition-case _err
-               (let* ((session-id (alist-get 'MCP-Session-Id headers))
-                      (session (emcp--server-get-session server session-id))
-                      (object (and body (json-parse-string body))))
-                 (cond
-                  ((not session-id)
-                   (if (and (eq (emcp--jsonrpc-type object) 'request)
-                            (equal (gethash "method" object) "initialize"))
-                       (pcase-let ((`(,session . ,response) (emcp--server-on-initialize server object)))
-                         (funcall send-response
-                                  `( :status Created
-                                     :headers ((MCP-Session-Id . ,(plist-get session :id))
-                                               (Content-Type . "application/json"))
-                                     :body ,(json-serialize response))))
-                     (no-session-id)))
-                  ((not session) (invalid-session-id session-id))
-                  ((not (protocol-versions-match-p session headers))
-                   (protocol-version-mismatch session headers))
-                  (t
-                   (pcase (emcp--jsonrpc-type object)
-                     ('request
-                      (emcp--server-on-request
-                       server session object
-                       (lambda (response)
-                         (funcall send-response
-                                  `( :status OK
-                                     :headers ((Content-Type . "application/json"))
-                                     :body ,(json-serialize response))))))
-                     ((or 'result 'error)
-                      ;; EMCP sends no requests, so we do not expect
-                      ;; to receive any responses
-                      (emcp--session-touch session)
-                      (emcp--log server (emcp--context-from-session server session)
-                        (warning (format "Rejecting unsolicited JSON-RPC response (%s)"
-                                         (gethash "id" object)))
-                        (debug (emcp--prefix-lines "> " (emcp--log-pp (emcp--to-alist object)))))
-                      (let ((response
-                             (emcp--jsonrpc-error nil emcp--jsonrpc-invalid-request
-                                                  "Server sends no requests")))
-                        (funcall send-response
-                                 `( :status Bad-Request
-                                    :headers ((Content-Type . "application/json"))
-                                    :body ,(json-serialize response)))))
-                     ('notification
-                      (emcp--server-on-notification server session object)
-                      (funcall send-response '(:status Accepted)))
-                     (_
-                      (invalid-request session object))))))
-             (json-parse-error
-              (emcp--log server nil
-                (warning (format "Failed to parse JSON-RPC request:\n%s"
-                                 (emcp--prefix-lines
-                                  "> " (emcp--log-fill (emcp--log-escape body))))))
-              (funcall send-response '(:status Bad-Request)))))
-          ('DELETE
-           (let* ((session-id (alist-get 'MCP-Session-Id headers))
-                  (session (emcp--server-get-session server session-id)))
-             (cond
-              ((not session-id) (no-session-id))
-              ((not session) (invalid-session-id session-id))
-              ((not (protocol-versions-match-p session headers))
-               (protocol-version-mismatch session headers))
-              (t
-               (emcp--log server (emcp--context-from-session server session)
-                 (info "Terminating session"))
-               (emcp--server-delete-session server session)
-               (funcall send-response '(:status No-Content))))))
-          (_ (unexpected-method method))))))))
+(defun emcp-http--decode-header-value (value)
+  "Decode the header VALUE, which may use the base64 sentinel encoding.
+
+Return the decoded string or nil if VALUE is not valid base64-encoded
+UTF-8."
+  (if (let ((case-fold-search nil))
+        ;; The spec requires the markers in lowercase
+        (string-match "\\`=\\?base64\\?\\(.*\\)\\?=\\'" value))
+      (when-let* ((bytes (ignore-errors (base64-decode-string (match-string 1 value))))
+                  (decoded (decode-coding-string bytes 'utf-8-unix))
+                  ;; Invalid UTF-8 decodes to raw bytes of the eight-bit
+                  ;; charset
+                  ((not (memq 'eight-bit (find-charset-string decoded)))))
+        decoded)
+    value))
+
+(defun emcp-http--mirrored-header-mismatch (headers request)
+  "Compare the HTTP HEADERS that mirror fields of the JSON-RPC REQUEST.
+
+The spec requires MCP-Protocol-Version, Mcp-Method and, for some
+methods, Mcp-Name to repeat body fields for HTTP intermediaries.  Return
+nil if they are present and match the body or a message describing the
+mismatch."
+  (cond*
+   ((bind* (header-version (alist-get 'MCP-Protocol-Version headers))
+           (header-method (alist-get 'Mcp-Method headers))
+           (header-name (alist-get 'Mcp-Name headers))
+           (method (gethash "method" request))
+           (params (gethash "params" request))
+           (meta (and (hash-table-p params) (gethash "_meta" params)))
+           (version (and (hash-table-p meta)
+                         (gethash "io.modelcontextprotocol/protocolVersion" meta)))
+           ;; Only these methods mirror a name into Mcp-Name
+           (name-field (pcase method
+                         ((or "tools/call" "prompts/get") "name")
+                         ("resources/read" "uri")))))
+   ((not header-version)
+    "Missing MCP-Protocol-Version header")
+   ;; `emcp--request-context' reports a missing body version as invalid params
+   ((and (stringp version) (not (equal header-version version)))
+    (format "MCP-Protocol-Version header value '%s' does not match body value '%s'"
+            header-version version))
+   ((not header-method)
+    "Missing Mcp-Method header")
+   ((not (equal header-method method))
+    (format "Mcp-Method header value '%s' does not match body value '%s'"
+            header-method method))
+   ((not name-field)
+    nil)
+   ((not header-name)
+    "Missing Mcp-Name header")
+   ((bind* (decoded-name (emcp-http--decode-header-value header-name))
+           (name (and (hash-table-p params) (gethash name-field params)))))
+   ((not decoded-name)
+    (format "Mcp-Name header value '%s' is not valid base64-encoded UTF-8" header-name))
+   ((not (equal decoded-name name))
+    (format "Mcp-Name header value '%s' does not match body value '%s'"
+            decoded-name name))))
+
+(defun emcp--http-on-request (server http-request send-response)
+  "Process the HTTP-REQUEST to SERVER."
+  (emcp--log server nil (trace (emcp--prefix-lines "> " (emcp--log-pp http-request))))
+  ;; First, define all possible outcomes for a request including
+  ;; logging and response, so that the actual flow logic below stays
+  ;; compact.
+  (cl-flet* ((send-json (status json)
+               (funcall send-response
+                        `( :status ,status
+                           :headers ((Content-Type . "application/json"))
+                           :body ,(json-serialize json))))
+             (log-message (rpc-message)
+               (emcp--prefix-lines "> " (emcp--log-pp (emcp--to-alist rpc-message))))
+             (invalid-path (path)
+               (emcp--log server nil
+                 (warning (format "Invalid request path %s" (emcp--log-escape path))))
+               (funcall send-response '(:status Not-Found)))
+             (forbidden-origin (origin)
+               (emcp--log server nil
+                 (warning (format "Forbidden origin %s" (emcp--log-escape origin))))
+               (send-json 'Forbidden (emcp--jsonrpc-error nil emcp--jsonrpc-invalid-request
+                                                          "Forbidden origin")))
+             (method-not-allowed (method)
+               (emcp--log server nil
+                 (debug (format "Unexpected request method %s" method)))
+               (funcall send-response '( :status Method-Not-Allowed
+                                         :headers ((Allow . "POST")))))
+             (invalid-json (body)
+               (emcp--log server nil
+                 (warning (format "Failed to parse JSON-RPC message:\n%s"
+                                  (emcp--prefix-lines
+                                   "> " (emcp--log-fill (emcp--log-escape body))))))
+               (send-json 'Bad-Request (emcp--jsonrpc-error nil emcp--jsonrpc-parse-error
+                                                            "Parse error")))
+             (response-from-client (response)
+               (emcp--log server nil
+                 (warning (format "Rejecting JSON-RPC response (%s)" (gethash "id" response)))
+                 (debug (log-message response)))
+               (send-json 'Bad-Request (emcp--jsonrpc-error nil emcp--jsonrpc-invalid-request
+                                                            "Server sends no requests")))
+             (notification (notification)
+               (emcp--log server nil
+                 (info (format "> Notification %s" (gethash "method" notification)))
+                 (debug (log-message notification)))
+               (funcall send-response '(:status Accepted)))
+             (invalid-message (rpc-message)
+               (emcp--log server nil
+                 (warning "Invalid JSON-RPC message")
+                 (debug (log-message rpc-message)))
+               (send-json 'Bad-Request (emcp--jsonrpc-error nil emcp--jsonrpc-invalid-request
+                                                            "Invalid request")))
+             (legacy-initialize (request)
+               (emcp--log server nil
+                 (warning "Rejecting initialize from a legacy client")
+                 (debug (log-message request)))
+               (let* ((params (gethash "params" request))
+                      (requested (and (hash-table-p params)
+                                      (gethash "protocolVersion" params))))
+                 (send-json 'Bad-Request
+                            (emcp--jsonrpc-error
+                             request emcp--mcp-unsupported-protocol-version
+                             (format (concat "Unsupported protocol version: EMCP only "
+                                             "supports MCP %s, which has no initialize "
+                                             "request")
+                                     (string-join emcp-supported-versions ", "))
+                             `((supported . ,(vconcat emcp-supported-versions))
+                               (requested . ,(if (stringp requested) requested :null)))))))
+             (mismatching-headers (request mismatch)
+               (emcp--log server nil
+                 (warning (format "Header mismatch: %s" (emcp--log-escape mismatch)))
+                 (debug (log-message request)))
+               (send-json 'Bad-Request (emcp--jsonrpc-error
+                                        request emcp--mcp-header-mismatch
+                                        (format "Header mismatch: %s" mismatch))))
+             (invalid-request (request code error-message data)
+               (emcp--log server nil
+                 (warning (format "Rejecting request (%s): %s"
+                                  (gethash "id" request) (emcp--log-escape error-message)))
+                 (debug (log-message request)))
+               (send-json 'Bad-Request
+                          (emcp--jsonrpc-error request code error-message data)))
+             (send-rpc-response (response)
+               (let ((status (if (eql (alist-get 'code (alist-get 'error response))
+                                      emcp--jsonrpc-method-not-found)
+                                 'Not-Found
+                               'OK)))
+                 (send-json status response))))
+    (cond*
+     ((bind* (path (plist-get http-request :path))
+             (method (plist-get http-request :method))
+             (headers (plist-get http-request :headers))
+             (origin (alist-get 'Origin headers))
+             (body (or (plist-get http-request :body) ""))))
+     ;; Block all requests to unexpected paths
+     ((not (equal path (process-get (emcp--server-transport server) :emcp-path)))
+      (invalid-path path))
+     ;; Block requests with unexpected Origin headers to prevent DNS
+     ;; rebinding attacks
+     ((not (emcp-http--origin-allowed-p origin))
+      (forbidden-origin origin))
+     ;; The 2026-07-28 MCP spec only allows POST requests
+     ((not (eq method 'POST))
+      (method-not-allowed method))
+     ;; Reject invalid JSON bodies
+     ((bind* (rpc-message (condition-case nil
+                              (json-parse-string body)
+                            (json-error nil)))))
+     ((not rpc-message)
+      (invalid-json body))
+     ;; Reject all JSON-RPC types except requests
+     ((bind* (type (emcp--jsonrpc-type rpc-message))))
+     ;; EMCP sends no requests, so clients must not send responses
+     ((memq type '(result error))
+      (response-from-client rpc-message))
+     ;; The spec defines no client notifications for HTTP
+     ((eq type 'notification)
+      (notification rpc-message))
+     ((not (eq type 'request))
+      (invalid-message rpc-message))
+     ;; Legacy clients start with initialize and have no other way to
+     ;; learn which versions EMCP supports, see "Backward
+     ;; Compatibility" in the versioning section of the spec
+     ((equal (gethash "method" rpc-message) "initialize")
+      (legacy-initialize rpc-message))
+     ;; Ensure that the info in the HTTP headers matches the actual
+     ;; request
+     ((bind-and* (mismatch (emcp-http--mirrored-header-mismatch headers rpc-message)))
+      (mismatching-headers rpc-message mismatch))
+     (t
+      (condition-case outcome
+          (emcp--request-context server rpc-message)
+        (:success
+         (emcp--server-on-request server outcome rpc-message #'send-rpc-response))
+        (emcp-invalid-request
+         (apply #'invalid-request rpc-message (cdr outcome))))))))
 
 (provide 'emcp-http)
 ;;; emcp-http.el ends here

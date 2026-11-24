@@ -63,9 +63,9 @@ screenshots at will."
                          emcp-tools-find-definition
                          emcp-tools-find-references
                          emcp-tools-info-search)))
-    (develop . ( :description "Capabilities for developing Emacs lisp.
+    (develop . ( :description "Primitives for developing Emacs lisp.
 
-This gives the agent additional capabilities to work with Emacs and
+This gives the agent additional abilities to work with Emacs and
 inspect its current state like:
 1. Taking screenshots
 2. Reading and setting variables"
@@ -229,7 +229,7 @@ there is only a single running profile."
   (if-let* ((entry (assq profile emcp--servers)))
       (progn
         (emcp-http--stop-transport (cdr entry))
-        (emcp--server-stop (cdr entry))
+        (emcp--server-destroy (cdr entry))
         (setq emcp--servers (assq-delete-all profile emcp--servers))
         (when (called-interactively-p 'any)
           (message "Stopped %s" profile)))
@@ -250,7 +250,7 @@ there is only a single running profile."
   (if-let* ((running (alist-get profile emcp--servers)))
       (progn
         (emcp-http--stop-transport running)
-        (emcp--server-stop running)
+        (emcp--server-destroy running)
         (setq emcp--servers (assq-delete-all profile emcp--servers))
         (let* ((resolved (emcp--resolve-profile (alist-get profile emcp-profiles)))
                (server (emcp--server-build :name (format "emcp-%s" profile)

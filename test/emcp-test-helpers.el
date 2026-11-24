@@ -19,8 +19,9 @@
 
 ;;; Commentary:
 
-;; Two test clients: a core client that drives `emcp--server-on-request' directly without
-;; any transport, and a raw HTTP client that talks to a server's HTTP transport over TCP.
+;; Two test clients: a core client that drives `emcp--request-context'
+;; and `emcp--server-on-request' directly without any transport, and a
+;; raw HTTP client that talks to a server's HTTP transport over TCP.
 ;; The raw client is adapted from the test helpers in http-server.el.
 
 ;;; Code:
@@ -30,14 +31,14 @@
 (require 'ert)
 
 (defmacro emcp-test-with-server (server form &rest body)
-  "Bind SERVER to FORM, execute BODY, then stop the server."
+  "Bind SERVER to FORM, execute BODY, then destroy the server."
   (declare (indent 2) (debug (symbolp sexp body)))
   ;; Log at trace level to exercise logging code during tests
   `(let* ((emcp-log-level 'trace)
           (,server ,form))
      (unwind-protect
          (progn ,@body)
-       (emcp--server-stop ,server))))
+       (emcp--server-destroy ,server))))
 
 (defmacro emcp-test-with-http-server (server form &rest body)
   "Bind SERVER to FORM, start its HTTP transport, execute BODY, then stop both.
@@ -61,49 +62,75 @@ The transport listens on a random port."
      (while (not ,form)
        (accept-process-output nil 0.01))))
 
+;;; Test primitives
+
+(emcp-deftool emcp-test--tool () "A test tool." :name "tool"
+              '((content . [((type . "text") (text . "tool result"))])))
+
+(emcp-defprompt emcp-test--prompt () "A test prompt." :name "prompt"
+                '((messages . [((role . "user") (content . ((type . "text") (text . "hi"))))])))
+
+(emcp-defresource emcp-test--resource "emcp://test/static" "A static test resource."
+                  `((contents . [((uri . ,uri) (text . "static"))])))
+
+(emcp-defresource emcp-test--template "emcp://test/template/{id}" "A test template."
+                  :ttl-ms 500
+                  `((contents . [((uri . ,uri) (text . ,id))])))
+
+(defconst emcp-test-primitives
+  '( :tools (emcp-test--tool)
+     :prompts (emcp-test--prompt)
+     :resources (emcp-test--resource emcp-test--template))
+  "Keyword arguments for `emcp--server-build' with one primitive of each kind.")
+
 ;;; Core client
 
 (cl-defstruct (emcp-test-client (:constructor emcp-test-make-client)
                                 (:copier nil))
   "An MCP client for SERVER for testing.
 
-Drives SERVER directly without any transport."
-  server session next-request-id)
+Drives SERVER directly without any transport.  CLIENT-INFO is the
+clientInfo alist sent with every request, if any."
+  server client-info (next-request-id 1))
 
-(cl-defun emcp-test-client-init-session (server &key on-notification client-info)
-  "Initialize a new client session for SERVER.
+(cl-defun emcp-test-make-request-meta
+    (&key (protocol-version (car emcp-supported-versions))
+          client-capabilities client-info log-level omit)
+  "Build a request _meta alist.
 
-Calls (ON-NOTIFICATION NOTIFICATION) when the server sends a notification.
-CLIENT-INFO is an optional clientInfo alist sent with the initialize
-request."
-  (pcase-let ((`(,session ,_response)
-               (emcp--server-on-initialize
-                server
-                (emcp-test-to-hash-table
-                 `((id . 1)
-                   (params . ((protocolVersion . "2025-11-25")
-                              ,@(when client-info `((clientInfo . ,client-info))))))))))
-    (when on-notification
-      (emcp--server-on-client-channel server session on-notification))
-    (emcp--server-on-notification
-     server session
-     (emcp-test-to-hash-table '((method . "notifications/initialized"))))
-    (emcp-test-make-client :server server
-                           :session session
-                           :next-request-id 2)))
+PROTOCOL-VERSION, CLIENT-CAPABILITIES (default {}), CLIENT-INFO and
+LOG-LEVEL set the respective fields; nil CLIENT-INFO and LOG-LEVEL leave
+them out.  OMIT is a list of keywords among :protocol-version,
+:client-capabilities and :client-info whose fields are left out."
+  (let ((fields `((:protocol-version io.modelcontextprotocol/protocolVersion
+                                     ,protocol-version)
+                  (:client-capabilities io.modelcontextprotocol/clientCapabilities
+                                        ,(or client-capabilities (make-hash-table)))
+                  ,@(when client-info
+                      `((:client-info io.modelcontextprotocol/clientInfo ,client-info)))
+                  ,@(when log-level
+                      `((:log-level io.modelcontextprotocol/logLevel ,log-level))))))
+    (cl-loop for (keyword key value) in fields
+             unless (memq keyword omit)
+             collect (cons key value))))
 
-(defun emcp-test-client-send-request (client request callback)
+(defun emcp-test-client-send-request (client request callback &rest meta-args)
   "Send REQUEST through CLIENT, calling CALLBACK with the response.
 
-Adds a request `id' field to REQUEST automatically, unless already set."
+Adds a request `id' field to REQUEST automatically, unless already set,
+and the request _meta built from META-ARGS, see `emcp-test-make-request-meta'.
+The clientInfo defaults to the one of CLIENT."
   (unless (alist-get 'id request)
     (setf (alist-get 'id request) (emcp-test-client-next-request-id client))
     (cl-incf (emcp-test-client-next-request-id client)))
-  (emcp--server-on-request
-   (emcp-test-client-server client)
-   (emcp-test-client-session client)
-   (emcp-test-to-hash-table request)
-   callback))
+  (let* ((server (emcp-test-client-server client))
+         (meta (apply #'emcp-test-make-request-meta
+                      (append meta-args
+                              (list :client-info (emcp-test-client-client-info client)))))
+         (params `((_meta . ,meta) ,@(alist-get 'params request)))
+         (request (emcp-test-to-hash-table
+                   `((params . ,params) ,@(cl-remove 'params request :key #'car)))))
+    (emcp--server-on-request server (emcp--request-context server request) request callback)))
 
 (defmacro emcp-test-client-with-response (client response request &rest body)
   "Send REQUEST through CLIENT and bind RESPONSE in BODY.
@@ -130,17 +157,24 @@ BODY can optionally start with the following keyword arguments:
                  (while (not ,done)
                    (accept-process-output nil 0.01)))))))))
 
-(defun emcp-test-request (client method &optional params)
+(defun emcp-test-response-data (response)
+  "Return the result of RESPONSE without the MCP metadata fields.
+
+These are resultType, _meta and the cache hints."
+  (cl-remove-if (lambda (field) (memq (car field) '(resultType _meta ttlMs cacheScope)))
+                (alist-get 'result response)))
+
+(defun emcp-test-client-request (client method &optional params &rest meta-args)
   "Send METHOD with PARAMS through CLIENT and return the response alist.
 
-New tests should prefer this over `emcp-test-client-with-response', so
-that later changes to the request envelope only need to touch this
-function."
+META-ARGS are keyword arguments that override or omit _meta fields,
+see `emcp-test-make-request-meta'."
   (let (response)
-    (emcp-test-client-send-request
-     client
-     `((method . ,method) ,@(when params `((params . ,params))))
-     (lambda (r) (setq response r)))
+    (apply #'emcp-test-client-send-request
+           client
+           `((method . ,method) ,@(when params `((params . ,params))))
+           (lambda (r) (setq response r))
+           meta-args)
     (emcp-test-wait-for response)
     response))
 
@@ -157,7 +191,7 @@ the full JSON-RPC response."
         (request (gensym "request")))
     `(let ((,name (plist-get (get ,tool-symbol 'emcp-tool) :name)))
        (emcp-test-with-server ,server (emcp--server-build :tools (list ,tool-symbol))
-         (let* ((,client (emcp-test-client-init-session ,server))
+         (let* ((,client (emcp-test-make-client :server ,server))
                 (,request `((method . "tools/call")
                             (params . ((name . ,,name)
                                        (arguments . ,,arguments))))))
@@ -166,7 +200,7 @@ the full JSON-RPC response."
 
 ;;; Raw HTTP client
 
-(defmacro emcp-test-with-http (conn server &rest body)
+(defmacro emcp-test-with-http-connection (conn server &rest body)
   "Bind CONN to a raw TCP connection to the HTTP transport of SERVER.
 
 Execute BODY, then close CONN.  SERVER needs a running transport, see
@@ -193,14 +227,43 @@ request."
          (when ,conn (emcp-test-http-disconnect ,conn))
          (kill-buffer ,buffer)))))
 
-(defun emcp-test-http--default-headers (_body)
+(defun emcp-test-make-request (method &optional params &rest meta-args)
+  "Build a JSON-RPC request for METHOD with PARAMS and a valid _meta.
+
+META-ARGS override or omit _meta fields, see `emcp-test-make-request-meta'."
+  `((jsonrpc . "2.0")
+    (id . 1)
+    (method . ,method)
+    (params . ((_meta . ,(apply #'emcp-test-make-request-meta meta-args)) ,@params))))
+
+(defun emcp-test-http-encode-header-value (value)
+  "Encode VALUE for an Mcp-Name header, using the base64 sentinel if needed."
+  (if (or (string-match-p "[^\x20-\x7e]" value)
+          (string-match-p "\\`[ \t]\\|[ \t]\\'" value)
+          (string-match-p "\\`=\\?base64\\?.*\\?=\\'" value))
+      (format "=?base64?%s?=" (base64-encode-string (encode-coding-string value 'utf-8) t))
+    value))
+
+(defun emcp-test-http--default-headers (body)
   "Return the default request headers for the JSON-RPC message BODY.
 
-BODY is the message as passed to `emcp-test-http-request'.  Protocol headers
-derived from BODY belong here, so that all tests send them by default."
-  `(("Content-Type" . "application/json")
-    ("Accept" . "application/json, text/event-stream")
-    ("MCP-Protocol-Version" . ,(car emcp-supported-versions))))
+BODY is the message as passed to `emcp-test-http-request'.  Protocol
+headers are derived from BODY, so that tests send valid requests by
+default."
+  (let* ((message (and (consp body) body))
+         (method (alist-get 'method message))
+         (params (alist-get 'params message))
+         (version (or (alist-get 'io.modelcontextprotocol/protocolVersion
+                                 (alist-get '_meta params))
+                      (car emcp-supported-versions)))
+         (name (pcase method
+                 ((or "tools/call" "prompts/get") (alist-get 'name params))
+                 ("resources/read" (alist-get 'uri params)))))
+    `(("Content-Type" . "application/json")
+      ("Accept" . "application/json, text/event-stream")
+      ("MCP-Protocol-Version" . ,version)
+      ,@(when (stringp method) `(("Mcp-Method" . ,method)))
+      ,@(when (stringp name) `(("Mcp-Name" . ,(emcp-test-http-encode-header-value name)))))))
 
 (defun emcp-test-http--response-head ()
   "Parse the response head at the start of the current buffer.

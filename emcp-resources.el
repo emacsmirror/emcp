@@ -21,7 +21,7 @@
 
 ;; MCP resource templates as defined by the spec [1].
 ;;
-;; [1] https://modelcontextprotocol.io/specification/2025-11-25/server/resources
+;; [1] https://modelcontextprotocol.io/specification/2026-07-28/server/resources
 
 ;;; Code:
 

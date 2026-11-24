@@ -58,7 +58,7 @@
     (let ((emcp-tools-eval-default-policy t))
       (should (eq (emcp-tools-eval--authorize server) nil)))))
 
-(ert-deftest emcp-tests-eval-authorize-default-action ()
+(ert-deftest emcp-tests-eval-authorize-default-policy ()
   (emcp-test-with-server server (emcp--server-build)
     (let ((emcp-tools-eval-default-policy t))
       (should (eq (emcp-tools-eval--authorize server) t)))
