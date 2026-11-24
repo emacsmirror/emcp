@@ -120,5 +120,23 @@ Confirmation buffers that BODY leaves behind are killed afterwards."
       (kill-buffer buf)
       (should (equal calls '(no-once))))))
 
+(ert-deftest emcp-tests-confirm-cancel-dismisses ()
+  "Cancelling the request kills the buffer.
+
+The callback receives the :on-cancel value."
+  (emcp-tests-with-confirm-context context
+    (let* ((calls nil)
+           (buf (emcp-confirm-prompt
+                 context
+                 :title "do thing"
+                 :body ""
+                 :on-dismiss 'no-once
+                 :on-cancel 'cancel
+                 :groups '((:actions ((?y "Yes" :result yes-once))))
+                 :callback (lambda (r) (push r calls)))))
+      (emcp--context-cancel context)
+      (should-not (buffer-live-p buf))
+      (should (equal calls '(cancel))))))
+
 (provide 'emcp-confirm-tests)
 ;;; emcp-confirm-tests.el ends here

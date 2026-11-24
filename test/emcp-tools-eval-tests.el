@@ -151,5 +151,28 @@
         (should (equal text "```emacs-lisp\n2\n```"))
         (should (= emcp-tests--probe 1))))))
 
+;;; Cancellation
+
+(ert-deftest emcp-tests-eval-tool-client-disconnect ()
+  "A client disconnect dismisses the open confirmation buffer unevaluated."
+  (let ((emcp-http-keep-alive-interval 0.05)
+        (emcp-tools-eval-default-policy 'ask)
+        (emcp-confirm-notify-function nil)
+        (emcp-tests--probe nil)
+        (confirm-buffer nil))
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (buffer &rest _) (setq confirm-buffer buffer))))
+      (emcp-test-with-http-server server (emcp--server-build :tools '(emcp-tools-eval))
+        (emcp-test-with-http-connection conn server
+          (emcp-test-http-request
+           conn 'POST (emcp-test-make-request
+                       "tools/call"
+                       '((name . "eval")
+                         (arguments . ((code . "(setq emcp-tests--probe t)"))))))
+          (should (buffer-live-p confirm-buffer))
+          (delete-process conn)
+          (emcp-test-wait-for (not (buffer-live-p confirm-buffer)))
+          (should-not emcp-tests--probe))))))
+
 (provide 'emcp-tools-eval-tests)
 ;;; emcp-tools-eval-tests.el ends here

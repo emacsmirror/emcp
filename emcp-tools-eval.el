@@ -108,6 +108,7 @@ May record a server mode in SERVER."
   (pcase action
     ('yes-once    t)
     ('no-once     nil)
+    ('cancel      nil)
     ('mode-accept
      (setf (emcp--server-mode server :emcp-tools-eval-mode) 'accept)
      t)
@@ -131,8 +132,9 @@ font-lock of its own) renders directly."
 (defun emcp-tools-eval--prompt (context form callback)
   "Open the confirmation buffer for FORM in the tool call CONTEXT.
 
-CALLBACK is invoked with a t or nil decision after the user picks an
-action."
+CALLBACK is invoked with a t or nil decision and its reason, `user' if
+the user picked an action or `cancel' if the client cancelled the
+request."
   (let* ((pretty (string-trim (pp-to-string form)))
          (code (emcp-tools-eval--fontify-elisp pretty)))
     (emcp-confirm-prompt
@@ -141,6 +143,7 @@ action."
      :body code
      :data (list :code code)
      :on-dismiss 'no-once
+     :on-cancel 'cancel
      :groups
      `(( :title "Accept?"
          :actions ((?y "Yes" :result yes-once)
@@ -153,7 +156,8 @@ action."
      :callback (lambda (action)
                  (funcall callback
                           (emcp-tools-eval--apply-action
-                           action (emcp-context-server context)))))))
+                           action (emcp-context-server context))
+                          (if (eq action 'cancel) 'cancel 'user))))))
 
 ;;; Decision logging
 
@@ -161,8 +165,8 @@ action."
   "Format a single decision-log line.
 
 DECISION is t (accept) or nil (reject).  REASON is a symbol describing
-why this decision was made (e.g. `user', `mode', `default').  FORM is
-the form that was decided on."
+why this decision was made: `user', `mode', `default' or `cancel' if the
+client cancelled the request.  FORM is the form that was decided on."
   (let ((pp (string-trim (pp-to-string form))))
     (format "eval %s %s %s"
             (if decision "ACCEPT" "REJECT")
@@ -172,21 +176,14 @@ the form that was decided on."
 ;;; The tool
 
 (defun emcp-tools-eval--decision-source (server)
-  "Return a symbol describing why an eval call was decided on SERVER.
+  "Return why an eval call on SERVER was decided without asking the user.
 
-Used only for logging.  The result is one of:
-- `mode' if SERVER has an accept/reject mode set,
-- `user' if SERVER has an `ask' mode set or `emcp-tools-eval-default-policy'
-  is `ask' (the user is consulted via the confirmation buffer),
-- `default' if `emcp-tools-eval-default-policy' is t or nil
-  (auto-decided without asking)."
-  (let ((mode (emcp--server-mode server :emcp-tools-eval-mode)))
-    (cond
-     ((memq mode '(accept reject)) 'mode)
-     ((or (eq mode 'ask)
-          (eq emcp-tools-eval-default-policy 'ask))
-      'user)
-     (t 'default))))
+Used only for logging.  The result is `mode' if SERVER has an
+accept/reject mode set and `default' if the decision comes from
+`emcp-tools-eval-default-policy'."
+  (if (memq (emcp--server-mode server :emcp-tools-eval-mode) '(accept reject))
+      'mode
+    'default))
 
 (defun emcp-tools-eval--eval-form (form send-result)
   "Evaluate FORM and call SEND-RESULT with the MCP tool result alist."
@@ -231,13 +228,10 @@ and decision fatigue."
   :async t
   (condition-case err
       (let* ((form (emcp-tools-eval--parse code))
-             (decision (emcp-tools-eval--authorize server))
-             ;; Capture the source before the prompt opens: a mode-accept or mode-reject
-             ;; pick by the user would otherwise relabel this call's source to `mode'.
-             (source (emcp-tools-eval--decision-source server)))
-        (cl-flet ((maybe-eval (accept)
+             (decision (emcp-tools-eval--authorize server)))
+        (cl-flet ((maybe-eval (accept reason)
                     (emcp--log server context
-                      (info (emcp-tools-eval--format-log accept source form)))
+                      (info (emcp-tools-eval--format-log accept reason form)))
                     (if accept
                         (emcp-tools-eval--eval-form form #'send-result)
                       (send-result
@@ -246,7 +240,7 @@ and decision fatigue."
                          (isError . t))))))
           (if (eq decision 'ask)
               (emcp-tools-eval--prompt context form #'maybe-eval)
-            (maybe-eval decision))))
+            (maybe-eval decision (emcp-tools-eval--decision-source server)))))
     (emcp-tools-eval-parse-error
      (emcp--log server context
        (info (format "eval REJECT parse-error %s" (cadr err))))

@@ -230,6 +230,15 @@ instead of hanging."
     (setq emcp-confirm--pending nil)
     (funcall callback (plist-get pending :on-dismiss))))
 
+(defun emcp-confirm--cancel (buf result)
+  "Answer the confirmation in BUF with RESULT, because its request was cancelled.
+
+Do nothing if the user has already answered."
+  (when (and (buffer-live-p buf)
+             (buffer-local-value 'emcp-confirm--pending buf))
+    (with-current-buffer buf
+      (emcp-confirm--dispatch result))))
+
 ;;; Desktop notifications
 
 (declare-function notifications-notify "notifications")
@@ -357,7 +366,8 @@ actions that focus the frame displaying it."
          (warning (format "Notification failed: %s"
                           (error-message-string err))))))))
 
-(cl-defun emcp-confirm-prompt (context &key title body data groups on-dismiss callback)
+(cl-defun emcp-confirm-prompt (context &key title body data groups on-dismiss
+                                       (on-cancel on-dismiss) callback)
   "Open the confirmation buffer to ask the user about a tool call.
 
 CONTEXT is the `emcp-context' of the tool call.
@@ -383,7 +393,10 @@ GROUPS is an ordered list of action groups.  Each group is a plist with:
 CALLBACK is invoked exactly once with one of:
   - the chosen :result symbol, if the user picks a :result action;
   - the ON-DISMISS value, if the buffer is killed (via `q' or
-    `kill-buffer') before any :result action runs.
+    `kill-buffer') before any :result action runs;
+  - the ON-CANCEL value, if the client cancels the request of CONTEXT
+    before any :result action runs.  The buffer is killed then.
+    ON-CANCEL defaults to ON-DISMISS.
 
 Returns the buffer."
   (let ((buf (generate-new-buffer emcp-confirm-buffer-name)))
@@ -413,6 +426,9 @@ Returns the buffer."
         (setq emcp-confirm--ready-time
               (time-add (current-time) emcp-confirm-input-delay))
         (add-hook 'pre-command-hook #'emcp-confirm--block-input nil t)))
+    ;; Registered last, because it runs right away if the request is
+    ;; already cancelled
+    (emcp-context-on-cancel context #'emcp-confirm--cancel buf on-cancel)
     buf))
 
 (provide 'emcp-confirm)

@@ -88,16 +88,17 @@ MESSAGE alist as an event.  If FINAL is non-nil, end the stream after
 MESSAGE.  SEND does nothing after the stream has ended.
 
 Send a keep-alive comment every `emcp-http-keep-alive-interval' seconds.
-If the client closes the stream, call ON-DISCONNECT without arguments.
-This can happen synchronously while ON-OPEN is still running, e.g. when
-its first SEND fails."
+If the client closes the stream, call ON-DISCONNECT with the error that
+revealed it.  This can happen before ON-OPEN, if the client disconnects
+before the stream opens, or synchronously while ON-OPEN is still
+running, e.g. when its first SEND fails."
   (let (send-chunk timer)
     (cl-labels ((close ()
                   (cancel-timer timer)
                   (setq send-chunk nil))
                 (write (chunk final)
                   (when send-chunk
-                    (condition-case nil
+                    (condition-case err
                         (progn
                           (funcall send-chunk chunk :keep-open (not final))
                           (when final (close)))
@@ -107,7 +108,7 @@ its first SEND fails."
                       ;; the process is still open
                       (error
                        (close)
-                       (funcall on-disconnect)))))
+                       (funcall on-disconnect err)))))
                 (send (message &optional final)
                   (write (concat "data: " (json-serialize message) "\n\n") final))
                 (body (chunk-fn)
@@ -116,14 +117,22 @@ its first SEND fails."
                                            emcp-http-keep-alive-interval
                                            #'write ":\n\n" nil))
                   (funcall on-open #'send)))
-      (funcall send-response
-               `( :status OK
-                  :headers ((Content-Type . "text/event-stream")
-                            (Cache-Control . "no-cache")
-                            ;; Recommended by the spec to stop proxies
-                            ;; from buffering events
-                            (X-Accel-Buffering . "no"))
-                  :body ,#'body)))))
+      (condition-case err
+          (funcall send-response
+                   `( :status OK
+                      :headers ((Content-Type . "text/event-stream")
+                                (Cache-Control . "no-cache")
+                                ;; Recommended by the spec to stop
+                                ;; proxies from buffering events
+                                (X-Accel-Buffering . "no"))
+                      :body ,#'body))
+        (error
+         ;; Without a timer, the error comes from writing the headers,
+         ;; e.g. because the client has already disconnected.  Later
+         ;; errors come from ON-OPEN.
+         (if timer
+             (signal (car err) (cdr err))
+           (funcall on-disconnect err)))))))
 
 (defun emcp-http--origin-allowed-p (origin)
   "Return non-nil if a request with Origin header ORIGIN may access the server.
@@ -283,6 +292,10 @@ mismatch."
                                  'Not-Found
                                'OK)))
                  (send-json status response)))
+             (log-disconnect (context err)
+               ;; Besides disconnects, this reveals other send errors
+               (emcp--log server context
+                 (info (format "Stream closed: %s" (error-message-string err)))))
              (subscribe (context request)
                (condition-case outcome
                    (emcp--subscription-requested-notifications request)
@@ -298,7 +311,13 @@ mismatch."
                        ;; acknowledgment fails, e.g. because the
                        ;; client has already disconnected.
                        (emcp--server-acknowledge-subscription server subscription))
-                     (lambda () (emcp--server-unsubscribe server subscription)))))
+                     (lambda (err)
+                       (log-disconnect context err)
+                       ;; SUBSCRIPTION is nil if the stream never
+                       ;; opened, e.g. because sending the headers
+                       ;; failed
+                       (when subscription
+                         (emcp--server-unsubscribe server subscription))))))
                  (emcp-invalid-request
                   (pcase-let ((`(,code ,error-message ,data) (cdr outcome)))
                     (emcp--log server context
@@ -307,7 +326,40 @@ mismatch."
                                        (emcp--log-escape error-message)))
                       (debug (log-message request)))
                     (send-rpc-response
-                     (emcp--jsonrpc-error request code error-message data)))))))
+                     (emcp--jsonrpc-error request code error-message data))))))
+             (respond (context request)
+               (let (responded response-computed send-event)
+                 (emcp--server-on-request
+                  server context request
+                  (lambda (rpc-response)
+                    ;; The first response that goes out wins
+                    (unless responded
+                      ;; If we have opened an SSE stream for
+                      ;; asynchronous responses
+                      (if send-event
+                          (progn
+                            ;; All work for the request is done now,
+                            ;; so a disconnect during the send must
+                            ;; not cancel it anymore
+                            (setq response-computed t)
+                            (funcall send-event rpc-response t))
+                        ;; In the synchronous case, send immediately
+                        (send-rpc-response rpc-response))
+                      (setq responded t))))
+                 ;; If the response is asynchronous (so no response
+                 ;; has been sent yet), open an SSE stream to let the
+                 ;; client know of progress via Keep-Alive
+                 ;; notifications.
+                 (unless responded
+                   (emcp-http--sse-stream
+                    send-response
+                    (lambda (send-message) (setq send-event send-message))
+                    (lambda (err)
+                      (log-disconnect context err)
+                      ;; If the connection closes before the response
+                      ;; is computed, cancel the request
+                      (unless response-computed
+                        (emcp--context-cancel context))))))))
     (cond*
      ((bind* (path (plist-get http-request :path))
              (method (plist-get http-request :method))
@@ -356,7 +408,7 @@ mismatch."
          ;; The response to subscriptions/listen is a stream of notifications
          (if (equal (gethash "method" rpc-message) "subscriptions/listen")
              (subscribe outcome rpc-message)
-           (emcp--server-on-request server outcome rpc-message #'send-rpc-response)))
+           (respond outcome rpc-message)))
         (emcp-invalid-request
          (apply #'invalid-request rpc-message (cdr outcome))))))))
 

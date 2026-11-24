@@ -65,6 +65,16 @@
                   :ttl-ms 500
                   `((contents . [((uri . ,uri) (text . ,id))])))
 
+(defvar emcp-test-pending-calls nil
+  "Calls of the \"pending\" tool that await a result, newest first.
+
+Each element is (CONTEXT . SEND-RESULT).  Let-bind this around tests.")
+
+(emcp-deftool emcp-test--pending-tool () "An async tool that waits for the test."
+              :name "pending"
+              :async t
+              (push (cons context #'send-result) emcp-test-pending-calls))
+
 (defconst emcp-test-primitives
   '( :tools (emcp-test--tool)
      :prompts (emcp-test--prompt)
@@ -291,22 +301,15 @@ chunk returns the empty string."
         (prog1 (buffer-substring start (- end 2))
           (delete-region (point-min) end))))))
 
-(cl-defun emcp-test-http-request (conn method body &key headers omit-headers path (timeout 1))
-  "Send a METHOD request with BODY on CONN and return the response.
+(cl-defun emcp-test-http-send-request (conn method body &key headers omit-headers path)
+  "Send a METHOD request with BODY on CONN.
 
 METHOD is an HTTP method symbol such as `GET'.  BODY is a JSON-RPC
 message as an alist, a string that is sent as is, or nil for an empty
 body.  HEADERS is an alist of header names and values that are added to
 or replace the default headers.  OMIT-HEADERS is a list of header names
 to leave out.  PATH defaults to the MCP path of the server.  Header
-names are strings and compared case-insensitively.  Wait at most TIMEOUT
-seconds for the response.
-
-The response is a plist (:status :headers :body).  Response headers are
-an alist of strings.  For an event stream, return right after the
-response head with :body nil and leave the events for
-`emcp-test-http-read-event'.  Otherwise, :body is the decoded response
-body."
+names are strings and compared case-insensitively."
   (let* ((server (process-get conn :emcp-test-server))
          (transport (emcp--server-transport server))
          (payload (encode-coding-string
@@ -327,39 +330,62 @@ body."
              (mapconcat (pcase-lambda (`(,name . ,value)) (format "%s: %s\r\n" name value))
                         all-headers "")
              (format "Content-Length: %d\r\n\r\n" (length payload))
-             payload))
-    (with-current-buffer (process-buffer conn)
-      (with-timeout (timeout (error "Incomplete response: %S" (buffer-string)))
-        (let (head)
-          (while (not (setq head (emcp-test-http--response-head)))
-            (accept-process-output conn 0.01))
-          (pcase-let* ((`(,status ,response-headers ,body-start) head)
-                       (header (lambda (name)
-                                 (cdr (assoc-string name response-headers t))))
-                       (content-length (funcall header "Content-Length"))
-                       (chunked (equal (funcall header "Transfer-Encoding") "chunked")))
-            (delete-region (point-min) body-start)
-            (list :status status
-                  :headers response-headers
-                  :body (cond
-                         ((string-prefix-p "text/event-stream"
-                                           (or (funcall header "Content-Type") ""))
-                          nil)
-                         (chunked
-                          (let (chunks chunk)
-                            (while (not (equal chunk ""))
-                              (if (setq chunk (emcp-test-http--take-chunk))
-                                  (push chunk chunks)
-                                (accept-process-output conn 0.01)))
-                            (decode-coding-string (apply #'concat (nreverse chunks)) 'utf-8)))
-                         (t
-                          (let ((n (if content-length (string-to-number content-length) 0)))
-                            (while (< (buffer-size) n)
-                              (accept-process-output conn 0.01))
-                            (prog1 (decode-coding-string
-                                    (buffer-substring (point-min) (+ (point-min) n))
-                                    'utf-8)
-                              (delete-region (point-min) (+ (point-min) n)))))))))))))
+             payload))))
+
+(cl-defun emcp-test-http-read-response (conn &key (timeout 1))
+  "Read the response to the last request on CONN.
+
+Wait at most TIMEOUT seconds for the response.
+
+The response is a plist (:status :headers :body).  Response headers are
+an alist of strings.  For an event stream, return right after the
+response head with :body nil and leave the events for
+`emcp-test-http-read-event'.  Otherwise, :body is the decoded response
+body."
+  (with-current-buffer (process-buffer conn)
+    (with-timeout (timeout (error "Incomplete response: %S" (buffer-string)))
+      (let (head)
+        (while (not (setq head (emcp-test-http--response-head)))
+          (accept-process-output conn 0.01))
+        (pcase-let* ((`(,status ,response-headers ,body-start) head)
+                     (header (lambda (name)
+                               (cdr (assoc-string name response-headers t))))
+                     (content-length (funcall header "Content-Length"))
+                     (chunked (equal (funcall header "Transfer-Encoding") "chunked")))
+          (delete-region (point-min) body-start)
+          (list :status status
+                :headers response-headers
+                :body (cond
+                       ((string-prefix-p "text/event-stream"
+                                         (or (funcall header "Content-Type") ""))
+                        nil)
+                       (chunked
+                        (let (chunks chunk)
+                          (while (not (equal chunk ""))
+                            (if (setq chunk (emcp-test-http--take-chunk))
+                                (push chunk chunks)
+                              (accept-process-output conn 0.01)))
+                          (decode-coding-string (apply #'concat (nreverse chunks))
+                                                'utf-8)))
+                       (t
+                        (let ((n (if content-length (string-to-number content-length) 0)))
+                          (while (< (buffer-size) n)
+                            (accept-process-output conn 0.01))
+                          (prog1 (decode-coding-string
+                                  (buffer-substring (point-min) (+ (point-min) n))
+                                  'utf-8)
+                            (delete-region (point-min) (+ (point-min) n))))))))))))
+
+(cl-defun emcp-test-http-request
+    (conn method body &key headers omit-headers path (timeout 1))
+  "Send a METHOD request with BODY on CONN and return the response.
+
+See `emcp-test-http-send-request' for METHOD, BODY, HEADERS,
+OMIT-HEADERS and PATH and `emcp-test-http-read-response' for TIMEOUT
+and the response."
+  (emcp-test-http-send-request conn method body
+                               :headers headers :omit-headers omit-headers :path path)
+  (emcp-test-http-read-response conn :timeout timeout))
 
 (defun emcp-test-http--parse-event (event)
   "Parse the SSE EVENT string.

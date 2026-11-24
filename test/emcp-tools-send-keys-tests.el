@@ -107,5 +107,36 @@
                                    (lambda (r) (setq result r)))
     (should (eq (alist-get 'isError result) t))))
 
+;;; Cancellation
+
+(ert-deftest emcp-tests-send-keys-tool-client-disconnect ()
+  "A client disconnect dismisses the open confirmation buffer without sending the keys."
+  (let ((emcp-http-keep-alive-interval 0.05)
+        (emcp-tools-send-keys-default-policy 'ask)
+        (emcp-confirm-notify-function nil)
+        (buf (generate-new-buffer " *emcp-tests-send-keys-disconnect*"))
+        (confirm-buffer nil))
+    (unwind-protect
+        (save-window-excursion
+          (set-window-buffer (selected-window) buf)
+          (cl-letf (((symbol-function 'pop-to-buffer)
+                     (lambda (buffer &rest _) (setq confirm-buffer buffer))))
+            (emcp-test-with-http-server server
+                (emcp--server-build :tools '(emcp-tools-send-keys))
+              (emcp-test-with-http-connection conn server
+                (emcp-test-http-request
+                 conn 'POST (emcp-test-make-request
+                             "tools/call"
+                             '((name . "send-keys") (arguments . ((keys . "h e l l o"))))))
+                (should (buffer-live-p confirm-buffer))
+                (delete-process conn)
+                (emcp-test-wait-for (not (buffer-live-p confirm-buffer)))
+                (with-current-buffer buf
+                  (should (equal (buffer-string) "")))
+                (with-current-buffer (emcp--server-log-buffer server)
+                  (should (string-match-p "send-keys REJECT cancel h e l l o"
+                                          (buffer-string))))))))
+      (kill-buffer buf))))
+
 (provide 'emcp-tools-send-keys-tests)
 ;;; emcp-tools-send-keys-tests.el ends here

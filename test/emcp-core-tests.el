@@ -419,6 +419,38 @@
         (should (string-match-p "^[^ ]+ [^ ]+ INFO  a-very-lon > Request tools/list" log))
         (should (string-match-p "^[^ ]+ [^ ]+ INFO  short      > Request tools/list" log))))))
 
+;;; Cancellation
+
+(ert-deftest emcp-tests-cancel-hooks-run-once ()
+  "Cancel hooks run once, even if the context is cancelled again.
+
+A hook registered after the cancellation runs right away.  Hooks
+receive the arguments they were registered with."
+  (emcp-test-with-server server (emcp--server-build)
+    (let ((context (emcp--make-context :server server :request-id 1))
+          (calls nil))
+      (cl-flet ((record (name) (push name calls)))
+        (emcp-context-on-cancel context #'record 'early)
+        (emcp--context-cancel context)
+        (emcp--context-cancel context)
+        (should (equal calls '(early)))
+        (emcp-context-on-cancel context #'record 'late)
+        (should (equal calls '(late early)))))))
+
+(ert-deftest emcp-tests-cancel-drops-response ()
+  "A result sent after its request was cancelled is dropped without an error."
+  (emcp-test-with-server server (emcp--server-build :tools '(emcp-test--pending-tool))
+    (let ((emcp-test-pending-calls nil)
+          (client (emcp-test-make-client :server server))
+          (responses nil))
+      (emcp-test-client-send-request client '((method . "tools/call")
+                                              (params . ((name . "pending"))))
+                                     (lambda (response) (push response responses)))
+      (pcase-let ((`(,context . ,send-result) (car emcp-test-pending-calls)))
+        (emcp--context-cancel context)
+        (funcall send-result '((content . []))))
+      (should-not responses))))
+
 ;;; Subscriptions
 
 (defun emcp-tests--subscribe (server id notifications)

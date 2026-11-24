@@ -213,12 +213,40 @@ with keyword arguments for `emcp-test-http-request'."
 ;;; Request handling
 
 (ert-deftest emcp-tests-http-valid-request ()
-  (emcp-tests-with-http-response response (emcp-test-make-request "tools/list")
+  "A tool that responds right away is answered with a JSON response."
+  (emcp-tests-with-http-response response (emcp-test-make-request "tools/call"
+                                                                  '((name . "tool")))
     (should (= (plist-get response :status) 200))
     (should (equal (emcp-tests--http-header response "Content-Type") "application/json"))
     (let ((json (emcp-tests--parse-http-response-body response)))
       (should (= (alist-get 'id json) 1))
       (should (equal (alist-get 'resultType (alist-get 'result json)) "complete")))))
+
+(emcp-deftool emcp-tests--http-failing-tool ()
+  "A tool that signals an error."
+  :name "failing"
+  (error "Tool failed"))
+
+(ert-deftest emcp-tests-http-failing-tool ()
+  "An error in a tool is answered with a JSON-RPC internal error.
+
+The error itself propagates out of the process filter of the server."
+  (emcp-test-with-http-server server
+      (emcp--server-build :tools '(emcp-tests--http-failing-tool))
+    (emcp-test-with-http-connection conn server
+      (emcp-test-http-send-request
+       conn 'POST (emcp-test-make-request "tools/call" '((name . "failing"))))
+      ;; Without `debug-on-error', Emacs catches errors in process
+      ;; filters, which ends a batch session
+      (let ((err (should-error (let ((debug-on-error t))
+                                 (with-timeout (1)
+                                   (while t (accept-process-output nil 0.01)))))))
+        (should (equal (cadr err) "Tool failed")))
+      (let* ((response (emcp-test-http-read-response conn))
+             (json (emcp-tests--parse-http-response-body response)))
+        (should (= (plist-get response :status) 200))
+        (should (= (alist-get 'code (alist-get 'error json))
+                   emcp--jsonrpc-internal-error))))))
 
 (ert-deftest emcp-tests-http-unsupported-version ()
   (emcp-tests-with-http-response response
@@ -327,18 +355,85 @@ EMCP only notices the disconnect when the next keep-alive fails."
         (delete-process conn)
         (emcp-test-wait-for (null (emcp--server-subscriptions server)))))))
 
-(ert-deftest emcp-tests-http-listen-graceful-closure ()
-  ;; Stopping the transport answers the listen request with a complete
-  ;; result, which ends the stream.
+(ert-deftest emcp-tests-http-listen-server-closure ()
+  "Stopping the transport cancels the subscription and ends its stream."
   (emcp-test-with-http-server server (emcp--server-build)
     (emcp-test-with-http-connection conn server
       (emcp-tests--http-listen conn 3 '((toolsListChanged . t)))
       (emcp-http--stop-transport server)
-      (let ((response (emcp-test-http-read-event conn)))
-        (should (= (alist-get 'id response) 3))
-        (should (equal (alist-get 'resultType (alist-get 'result response)) "complete"))
-        (should (= (emcp-tests--http-subscription-id response) 3)))
+      (let ((notification (emcp-test-http-read-event conn)))
+        (should (equal (alist-get 'method notification) "notifications/cancelled"))
+        (should (= (alist-get 'requestId (alist-get 'params notification)) 3))
+        (should (= (emcp-tests--http-subscription-id notification) 3)))
       (should-not (emcp-test-http-read-event conn)))))
+
+;;; Async responses
+
+(ert-deftest emcp-tests-http-async-tool-stream ()
+  "An async tool is answered with an SSE stream.
+
+The stream carries keep-alives until the response arrives as the final
+event."
+  (let ((emcp-http-keep-alive-interval 0.05)
+        (emcp-test-pending-calls nil))
+    (emcp-test-with-http-server server
+        (emcp--server-build :tools '(emcp-test--pending-tool))
+      (emcp-test-with-http-connection conn server
+        (let ((response (emcp-test-http-request
+                         conn 'POST (emcp-test-make-request "tools/call"
+                                                            '((name . "pending"))))))
+          (should (= (plist-get response :status) 200))
+          (should (equal (emcp-tests--http-header response "Content-Type")
+                         "text/event-stream"))
+          (should (equal (emcp-tests--http-header response "X-Accel-Buffering") "no"))
+          (should (eq (emcp-test-http-read-event conn) :comment))
+          (funcall (cdar emcp-test-pending-calls)
+                   '((content . [((type . "text") (text . "done"))])))
+          (let ((event (emcp-test-http-read-event conn)))
+            ;; Another keep-alive may precede the response
+            (while (eq event :comment)
+              (setq event (emcp-test-http-read-event conn)))
+            (should (= (alist-get 'id event) 1))
+            (should (equal (alist-get 'content (alist-get 'result event))
+                           [((type . "text") (text . "done"))])))
+          (should-not (emcp-test-http-read-event conn)))))))
+
+(ert-deftest emcp-tests-http-async-tool-unserializable ()
+  "An async result that is not valid JSON fails and ends the stream.
+
+The client receives an internal error instead."
+  (let ((emcp-test-pending-calls nil))
+    (emcp-test-with-http-server server
+        (emcp--server-build :tools '(emcp-test--pending-tool))
+      (emcp-test-with-http-connection conn server
+        (emcp-test-http-request conn 'POST (emcp-test-make-request "tools/call"
+                                                                   '((name . "pending"))))
+        ;; A buffer has no JSON representation
+        (should-error (funcall (cdar emcp-test-pending-calls)
+                               `((content . [((type . "text")
+                                              (text . ,(current-buffer)))]))))
+        (let ((event (emcp-test-http-read-event conn)))
+          (should (= (alist-get 'id event) 1))
+          (should (= (alist-get 'code (alist-get 'error event))
+                     emcp--jsonrpc-internal-error)))
+        (should-not (emcp-test-http-read-event conn))))))
+
+(ert-deftest emcp-tests-http-async-tool-disconnect ()
+  "A client disconnect cancels the pending request.
+
+EMCP only notices the disconnect when the next keep-alive fails."
+  (let ((emcp-http-keep-alive-interval 0.05)
+        (emcp-test-pending-calls nil)
+        (cancelled nil))
+    (emcp-test-with-http-server server
+        (emcp--server-build :tools '(emcp-test--pending-tool))
+      (emcp-test-with-http-connection conn server
+        (emcp-test-http-request conn 'POST (emcp-test-make-request "tools/call"
+                                                                   '((name . "pending"))))
+        (emcp-context-on-cancel (caar emcp-test-pending-calls)
+                                (lambda () (setq cancelled t)))
+        (delete-process conn)
+        (emcp-test-wait-for cancelled)))))
 
 (provide 'emcp-http-tests)
 ;;; emcp-http-tests.el ends here

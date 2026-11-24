@@ -70,6 +70,7 @@ May record a server mode in SERVER."
   (pcase action
     ('yes-once    t)
     ('no-once     nil)
+    ('cancel      nil)
     ('mode-accept
      (setf (emcp--server-mode server :emcp-tools-send-keys-mode) 'accept)
      t)
@@ -80,8 +81,9 @@ May record a server mode in SERVER."
 (defun emcp-tools-send-keys--prompt (context keys callback)
   "Open the confirmation buffer for KEYS in the tool call CONTEXT.
 
-CALLBACK is invoked with a t or nil decision after the user picks an
-action.
+CALLBACK is invoked with a t or nil decision and its reason, `user' if
+the user picked an action or `cancel' if the client cancelled the
+request.
 
 Customize placement of the confirmation buffer by adding an entry for
 `emcp-confirm-buffer-name' to `display-buffer-alist'."
@@ -90,6 +92,7 @@ Customize placement of the confirmation buffer by adding an entry for
    :title "send the keys"
    :body keys
    :on-dismiss 'no-once
+   :on-cancel 'cancel
    :groups
    `(( :title "Accept?"
        :actions ((?y "Yes" :result yes-once)
@@ -100,7 +103,8 @@ Customize placement of the confirmation buffer by adding an entry for
    :callback (lambda (action)
                (funcall callback
                         (emcp-tools-send-keys--apply-action
-                         action (emcp-context-server context))))))
+                         action (emcp-context-server context))
+                        (if (eq action 'cancel) 'cancel 'user)))))
 
 ;;; Decision logging
 
@@ -108,7 +112,8 @@ Customize placement of the confirmation buffer by adding an entry for
   "Format a single decision-log line.
 
 DECISION is t (accept) or nil (reject).  REASON is a symbol describing
-why this decision was made.  KEYS is the key sequence string that was
+why this decision was made: `user', `mode', `default' or `cancel' if the
+client cancelled the request.  KEYS is the key sequence string that was
 decided on."
   (format "send-keys %s %s %s"
           (if decision "ACCEPT" "REJECT")
@@ -116,22 +121,14 @@ decided on."
           (if (> (length keys) 80) (concat (substring keys 0 77) "...") keys)))
 
 (defun emcp-tools-send-keys--decision-source (server)
-  "Return a symbol describing why a send-keys call was decided on SERVER.
+  "Return why a send-keys call on SERVER was decided without asking the user.
 
-Used only for logging.  The result is one of:
-- `mode' if SERVER has an accept/reject mode set,
-- `user' if SERVER has an `ask' mode set or
-  `emcp-tools-send-keys-default-policy' is `ask' (the user is consulted via
-  the confirmation buffer),
-- `default' if `emcp-tools-send-keys-default-policy' is t or nil
-  (auto-decided without asking)."
-  (let ((mode (emcp--server-mode server :emcp-tools-send-keys-mode)))
-    (cond
-     ((memq mode '(accept reject)) 'mode)
-     ((or (eq mode 'ask)
-          (eq emcp-tools-send-keys-default-policy 'ask))
-      'user)
-     (t 'default))))
+Used only for logging.  The result is `mode' if SERVER has an
+accept/reject mode set and `default' if the decision comes from
+`emcp-tools-send-keys-default-policy'."
+  (if (memq (emcp--server-mode server :emcp-tools-send-keys-mode) '(accept reject))
+      'mode
+    'default))
 
 ;;; The tool
 
@@ -180,15 +177,12 @@ Prefer a more specialized tool if available to minimize user interaction
 and decision fatigue."
   :async t
   (let ((decision (emcp-tools-send-keys--authorize server))
-        ;; Capture the source before the prompt opens: a mode-accept or mode-reject pick
-        ;; by the user would otherwise relabel this call's source to `mode'.
-        (source (emcp-tools-send-keys--decision-source server))
-        ;; Capture now, since the confirmation buffer's `pop-to-buffer' may change the
-        ;; selected window
+        ;; Capture now, since the confirmation buffer's
+        ;; `pop-to-buffer' may change the selected window
         (target-window (selected-window)))
-    (cl-flet ((maybe-execute (accept)
+    (cl-flet ((maybe-execute (accept reason)
                 (emcp--log server context
-                  (info (emcp-tools-send-keys--format-log accept source keys)))
+                  (info (emcp-tools-send-keys--format-log accept reason keys)))
                 (if accept
                     (emcp-tools-send-keys--execute keys target-window #'send-result)
                   (send-result
@@ -197,7 +191,7 @@ and decision fatigue."
                      (isError . t))))))
       (if (eq decision 'ask)
           (emcp-tools-send-keys--prompt context keys #'maybe-execute)
-        (maybe-execute decision)))))
+        (maybe-execute decision (emcp-tools-send-keys--decision-source server))))))
 
 (provide 'emcp-tools-send-keys)
 ;;; emcp-tools-send-keys.el ends here

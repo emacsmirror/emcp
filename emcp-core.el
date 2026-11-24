@@ -26,6 +26,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'cl-print)
 (require 'rx)
 (require 'seq)
 
@@ -405,7 +406,41 @@ clients of SERVER.  Set it with `setf'."
   (protocol-version nil :documentation "The MCP protocol version string.")
   (client-info nil :documentation "The clientInfo object as a hash table, or nil.")
   (client-capabilities nil :documentation "The client capabilities as a hash table.")
-  (request-id nil :documentation "The JSON-RPC request id, or nil."))
+  (request-id nil :documentation "The JSON-RPC request id, or nil.")
+  (cancelled nil :documentation "Non-nil once the request has been cancelled.")
+  (cancel-hooks nil :documentation "(FUNCTION . ARGS) to call on cancellation, newest first."))
+
+(defun emcp-context-on-cancel (context function &rest args)
+  "Call FUNCTION with ARGS when the request of CONTEXT is cancelled.
+
+A client cancels a request, for example, by closing the connection
+before the response.  Use this in async bodies to stop work that is no
+longer needed.  If the request has already been cancelled, call
+FUNCTION right away."
+  (if (emcp-context-cancelled context)
+      (apply function args)
+    (push (cons function args) (emcp-context-cancel-hooks context))))
+
+(defun emcp--context-cancel (context)
+  "Cancel the request of CONTEXT.
+
+Run its cancel hooks unless it was already cancelled.  Responses to it
+will not be sent anymore."
+  (unless (emcp-context-cancelled context)
+    (let ((hooks (reverse (emcp-context-cancel-hooks context))))
+      (setf (emcp-context-cancelled context) t
+            (emcp-context-cancel-hooks context) nil)
+      (emcp--log (emcp-context-server context) context
+        (info (format "Request %s cancelled" (emcp-context-request-id context))))
+      (dolist (hook hooks)
+        ;; One failing hook must not keep the others from cleaning up
+        (condition-case err
+            (apply (car hook) (cdr hook))
+          (error
+           (emcp--log (emcp-context-server context) context
+             (error (format "Cancel hook %s failed: %s"
+                            (emcp--log-escape (cl-prin1-to-string hook))
+                            (emcp--log-escape (error-message-string err)))))))))))
 
 (defun emcp--request-context (server request)
   "Return the `emcp-context' for the JSON-RPC REQUEST to SERVER.
@@ -533,13 +568,17 @@ filter of REQUEST sets to true.  If REQUEST has no filter, signal
   "Return the _meta entries that tag messages on SUBSCRIPTION."
   `((io.modelcontextprotocol/subscriptionId . ,(emcp--subscription-id subscription))))
 
-(defun emcp--server-subscription-notify (server subscription method &optional params)
-  "Send the notification METHOD with PARAMS on SUBSCRIPTION of SERVER."
+(defun emcp--server-subscription-notify
+    (server subscription method &optional params final)
+  "Send the notification METHOD with PARAMS on SUBSCRIPTION of SERVER.
+
+If FINAL is non-nil, end the stream of SUBSCRIPTION afterwards."
   (emcp--log server (emcp--subscription-context subscription)
     (info (format "< Notification %s (%s)" method (emcp--subscription-id subscription))))
   (funcall (emcp--subscription-send subscription)
            (emcp--jsonrpc-notification
-            method `((_meta . ,(emcp--subscription-meta subscription)) ,@params))))
+            method `((_meta . ,(emcp--subscription-meta subscription)) ,@params))
+           final))
 
 (defun emcp--server-subscribe (server context request notifications send)
   "Register a subscription on SERVER and return it.
@@ -577,11 +616,10 @@ The caller must send the acknowledgment with
     (info (format "Subscription %s closed by the client" (emcp--subscription-id subscription)))))
 
 (defun emcp--server-close-subscriptions (server)
-  "End all subscriptions on SERVER gracefully.
+  "End all subscriptions on SERVER, e.g. because it shuts down.
 
-Respond to each subscriptions/listen request with a complete result,
-which ends its stream, as the spec recommends for servers that shut
-down."
+Send a final notifications/cancelled notification on each stream that
+references its subscriptions/listen request."
   (let ((subscriptions (emcp--server-subscriptions server)))
     (setf (emcp--server-subscriptions server) nil)
     (dolist (subscription subscriptions)
@@ -591,10 +629,13 @@ down."
           (info (format "Subscription %s ended by the server" id)))
         ;; One failing stream must not keep the others open
         (condition-case err
-            (funcall (emcp--subscription-send subscription)
-                     (emcp--mcp-result (emcp--subscription-request subscription)
-                                       `((_meta . ,(emcp--subscription-meta subscription))))
-                     t)
+            ;; The cancellation pattern of the spec requires this
+            ;; notification (MUST), which overrides the complete result
+            ;; that the subscriptions pattern recommends (SHOULD)
+            (emcp--server-subscription-notify
+             server subscription "notifications/cancelled"
+             `((requestId . ,id) (reason . "The server is shutting down"))
+             t)
           (error
            (emcp--log server context
              (error (format "Failed to end subscription %s: %s"
@@ -619,7 +660,8 @@ METHOD is one of the notifications in `emcp--mcp-subscription-notifications'."
   "Handle the MCP JSON-RPC2.0 request REQUEST on SERVER with CONTEXT.
 
 CONTEXT is the value of `emcp--request-context' for REQUEST.
-SEND-RESPONSE is called with the response alist."
+SEND-RESPONSE is called with the response alist, unless the request
+has been cancelled via `emcp--context-cancel' by then."
   (emcp--log server context
     (info
      (let* ((method (gethash "method" request))
@@ -635,14 +677,38 @@ SEND-RESPONSE is called with the response alist."
                (emcp--prefix-lines "> " (emcp--log-pp (emcp--to-alist params)))
              "No parameters")))
   (cl-flet ((log-and-send (response)
-              (emcp--log server context
-                (info (format "Response %s (%s)"
-                              (if (alist-get 'error response) "error" "ok")
-                              (alist-get 'id response)))
-                (debug (emcp--prefix-lines "< " (emcp--log-pp
-                                                 (or (alist-get 'result response)
-                                                     (alist-get 'error response))))))
-              (funcall send-response response)))
+              (let ((cancelled (emcp-context-cancelled context)))
+                (emcp--log server context
+                  (info (format "%s %s (%s)"
+                                ;; The spec forbids sending it
+                                (if cancelled "Dropping response" "Response")
+                                (if (alist-get 'error response) "error" "ok")
+                                (alist-get 'id response)))
+                  (debug (emcp--prefix-lines "< " (emcp--log-pp
+                                                   (or (alist-get 'result response)
+                                                       (alist-get 'error response))))))
+                (unless cancelled
+                  (condition-case err
+                      (funcall send-response response)
+                    (error
+                     (emcp--log server context
+                       (error (format "Failed to send response (%s): %s"
+                                      (alist-get 'id response)
+                                      (error-message-string err))))
+                     ;; Answer the request anyway, e.g. if RESPONSE is
+                     ;; not valid JSON
+                     (condition-case fallback-err
+                         (funcall send-response (emcp--jsonrpc-error
+                                                 request
+                                                 emcp--jsonrpc-internal-error
+                                                 "Failed to send response"))
+                       (error
+                        (emcp--log server context
+                          (error (format "Failed to send error response (%s): %s"
+                                         (alist-get 'id response)
+                                         (error-message-string fallback-err))))))
+                     ;; Let the caller know about the original failure
+                     (signal (car err) (cdr err))))))))
     (handler-bind
         ;; Last resort response in case an error interrupts request handling
         ((error
@@ -861,6 +927,14 @@ send a result or error:
  `send-error' (CODE MESSAGE &optional DATA): Signal an error to the
  client with error code CODE, MESSAGE and optional error DATA.
 
+If the client cancels the request, e.g. by closing the connection,
+`send-result' and `send-error' do nothing.  BODY can register a
+function that stops work that is no longer needed, or check for
+cancellation itself:
+
+  (emcp-context-on-cancel context #\\='stop-work an-arg)
+  (unless (emcp-context-cancelled context) ...)
+
 RESULT is a tool call result JSON document (an alist) as described in the
 spec, see this URL
 https://modelcontextprotocol.io/specification/2026-07-28/server/tools"
@@ -959,6 +1033,14 @@ send a result or error:
  `send-error' (CODE MESSAGE &optional DATA): Signal an error to the
  client with error code CODE, MESSAGE and optional error DATA.
 
+If the client cancels the request, e.g. by closing the connection,
+`send-result' and `send-error' do nothing.  BODY can register a
+function that stops work that is no longer needed, or check for
+cancellation itself:
+
+  (emcp-context-on-cancel context #\\='stop-work an-arg)
+  (unless (emcp-context-cancelled context) ...)
+
 RESULT is a prompts/get result JSON document (an alist) as described in the
 spec, see this URL
 https://modelcontextprotocol.io/specification/2026-07-28/server/prompts"
@@ -1054,6 +1136,14 @@ one of them once to send a result or error:
  `send-result' (RESULT): Send the resource RESULT to the client.
  `send-error' (CODE MESSAGE &optional DATA): Signal an error to the
  client with error code CODE, MESSAGE and optional error DATA.
+
+If the client cancels the request, e.g. by closing the connection,
+`send-result' and `send-error' do nothing.  BODY can register a
+function that stops work that is no longer needed, or check for
+cancellation itself:
+
+  (emcp-context-on-cancel context #\\='stop-work an-arg)
+  (unless (emcp-context-cancelled context) ...)
 
 RESULT is a resources/read result JSON document (an alist) as described
 in the spec, see this URL
