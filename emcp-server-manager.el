@@ -19,8 +19,11 @@
 
 ;;; Commentary:
 
-;; A UI for managing all running EMCP servers.  Allows quick access to each server's log,
-;; cycling its eval and send-keys modes and stopping it.
+;; A UI for managing all running EMCP servers.  Allows quick access to
+;; each server's log, cycling its eval and send-keys modes and
+;; stopping it.  It also shows how agents use each server: request
+;; statistics per method, per tool, prompt and resource and per
+;; client.
 
 ;;; Code:
 
@@ -63,6 +66,15 @@
   "Name of the server manager buffer."
   :group 'emcp-server-manager
   :type 'string)
+
+(defconst emcp-server-manager--active-seconds 300
+  "Clients seen within this many seconds are marked as active.")
+
+(defconst emcp-server-manager--name-sections
+  '(("tools/call" . "Tools")
+    ("prompts/get" . "Prompts")
+    ("resources/read" . "Resources"))
+  "Methods whose requests are broken down by name and their section titles.")
 
 (defconst emcp-server-manager--modes '(accept reject ask)
   "Possible values of a server mode shown in the server manager.
@@ -119,10 +131,14 @@ one of `accept', `reject' or `ask'."
       (key-description keys)
     (format "M-x %s" command)))
 
+(defun emcp-server-manager--label (label)
+  "Return LABEL with a colon, padded to align the values of server lines."
+  (format "%-16s" (concat label ":")))
+
 (defun emcp-server-manager--mode-line (label active command)
   "Render LABEL: mode1 mode2 mode3 with ACTIVE highlighted plus a hint for COMMAND."
   (concat
-   (format "%-16s" (concat label ":"))
+   (emcp-server-manager--label label)
    (mapconcat
     (lambda (mode)
       (emcp-server-manager--propertize
@@ -166,6 +182,99 @@ one of `accept', `reject' or `ask'."
          'emcp-server-manager-key)
         " to open)"))))
 
+(defun emcp-server-manager--format-time (time format)
+  "Format TIME with FORMAT, preceded by the date unless TIME is today."
+  (format-time-string (if (equal (format-time-string "%F" time) (format-time-string "%F"))
+                          format
+                        (concat "%F " format))
+                      time))
+
+(defun emcp-server-manager--plural (count noun)
+  "Return NOUN in the singular or plural form for COUNT."
+  (if (= count 1) noun (concat noun "s")))
+
+(defun emcp-server-manager--sorted-entries (table label count)
+  "Return the entries of TABLE as (LABEL . VALUE) by decreasing count.
+
+LABEL returns the label of a key and COUNT the count of a VALUE.
+Labels are sanitized, because keys come from clients.  Entries with
+equal counts are sorted by label."
+  (let (entries)
+    (maphash (lambda (key value)
+               (push (cons (emcp--sanitize-label (funcall label key)) value) entries))
+             table)
+    (sort entries :key (lambda (entry) (list (- (funcall count (cdr entry))) (car entry))))))
+
+(defun emcp-server-manager--insert-counts (value title counts)
+  "Insert a collapsible section TITLE that lists the COUNTS hash table.
+
+VALUE identifies the section within its server section, so that its
+visibility survives refreshes."
+  (unless (hash-table-empty-p counts)
+    (let* ((entries (emcp-server-manager--sorted-entries counts #'identity #'identity))
+           (width (apply #'max (mapcar (lambda (entry) (string-width (car entry))) entries)))
+           (count-width (length (number-to-string (cdar entries)))))
+      (magit-insert-section (emcp-counts value)
+        (magit-insert-heading "  " title)
+        (pcase-dolist (`(,key . ,count) entries)
+          (insert (format "      %s   %s\n"
+                          (truncate-string-to-width key width nil ?\s)
+                          (string-pad (number-to-string count) count-width nil t))))))))
+
+(defun emcp-server-manager--client-label (key)
+  "Return the label of the client KEY, see `emcp--server-stats-client-key'."
+  (pcase key
+    ('nil "(unknown)")
+    (`(,name . ,version) (if version (concat name " " version) name))))
+
+(defun emcp-server-manager--insert-clients (clients)
+  "Insert a section listing CLIENTS, a hash table of `emcp--client-stats'.
+
+Mark clients seen within `emcp-server-manager--active-seconds' with an
+asterisk."
+  (unless (hash-table-empty-p clients)
+    (let* ((entries (emcp-server-manager--sorted-entries
+                     clients #'emcp-server-manager--client-label
+                     #'emcp--client-stats-requests))
+           (width (apply #'max (mapcar (lambda (entry) (string-width (car entry))) entries)))
+           (count-width (length (number-to-string
+                                 (emcp--client-stats-requests (cdar entries))))))
+      (magit-insert-section (emcp-clients)
+        (magit-insert-heading "  Clients")
+        (pcase-dolist (`(,key . ,stats) entries)
+          (let ((requests (emcp--client-stats-requests stats))
+                (last-seen (emcp--client-stats-last-seen stats)))
+            (insert (format "    %s %s   %s %-8s   since %s   last %s\n"
+                            (if (time-less-p (time-since last-seen)
+                                             emcp-server-manager--active-seconds)
+                                "*"
+                              " ")
+                            (truncate-string-to-width key width nil ?\s)
+                            (string-pad (number-to-string requests) count-width nil t)
+                            (emcp-server-manager--plural requests "request")
+                            (emcp-server-manager--format-time
+                             (emcp--client-stats-first-seen stats) "%R")
+                            (emcp-server-manager--format-time last-seen "%T")))))))))
+
+(defun emcp-server-manager--insert-statistics (server)
+  "Insert the subscriptions, request statistics and clients of SERVER."
+  (let ((stats (emcp--server-stats server)))
+    (insert "  " (emcp-server-manager--label "Subscriptions")
+            (format "%d open\n" (length (emcp--server-subscriptions server)))
+            "  " (emcp-server-manager--label "Requests")
+            (number-to-string (emcp--server-request-count server)))
+    (when-let* ((last-request (emcp--server-stats-last-request stats)))
+      (let ((errors (emcp--server-stats-errors stats)))
+        (insert (format " (%d %s), last %s"
+                        errors (emcp-server-manager--plural errors "error")
+                        (emcp-server-manager--format-time last-request "%T")))))
+    (insert "\n")
+    (emcp-server-manager--insert-counts nil "Methods" (emcp--server-stats-methods stats))
+    (pcase-dolist (`(,method . ,title) emcp-server-manager--name-sections)
+      (when-let* ((names (gethash method (emcp--server-stats-names stats))))
+        (emcp-server-manager--insert-counts method title names)))
+    (emcp-server-manager--insert-clients (emcp--server-stats-clients stats))))
+
 (defun emcp-server-manager--insert-server (entry)
   "Insert a section for ENTRY, a (PROFILE . SERVER) pair from `emcp--servers'."
   (pcase-let ((`(,profile . ,server) entry))
@@ -177,7 +286,12 @@ one of `accept', `reject' or `ask'."
             (concat "  " url)
           ""))
       (emcp-server-manager--insert-log-line server)
+      (let ((started (emcp--server-started server)))
+        (insert "  " (emcp-server-manager--label "Uptime")
+                (format-seconds "%dd %hh %z%mm" (float-time (time-since started)))
+                (format-time-string " (since %F %R)\n" started)))
       (emcp-server-manager--insert-mode-lines server)
+      (emcp-server-manager--insert-statistics server)
       (insert "\n"))))
 
 (defun emcp-server-manager--render ()
@@ -290,7 +404,8 @@ LABEL is a string describing the mode for the user-facing message."
 
 Lists running EMCP servers, lets the user inspect and cycle each
 server's eval and send-keys mode in place, and gives quick access to
-each server's log buffer."
+each server's log buffer.  Each server also shows request statistics
+per method, per tool, prompt and resource and per client."
   (interactive)
   (let ((buf (get-buffer-create emcp-server-manager-buffer-name)))
     (with-current-buffer buf

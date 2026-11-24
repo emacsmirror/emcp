@@ -326,7 +326,8 @@ mismatch."
                                        (emcp--log-escape error-message)))
                       (debug (log-message request)))
                     (send-rpc-response
-                     (emcp--jsonrpc-error request code error-message data))))))
+                     (emcp--jsonrpc-error request code error-message data))
+                    (emcp--server-record-error server)))))
              (respond (context request)
                (let (responded response-computed send-event)
                  (emcp--server-on-request

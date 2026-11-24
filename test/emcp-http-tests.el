@@ -316,6 +316,17 @@ Return the acknowledgment."
                           (alist-get 'error (emcp-tests--parse-http-response-body response)))
                emcp--jsonrpc-invalid-params))))
 
+(ert-deftest emcp-tests-http-listen-statistics ()
+  "Listen requests count in the statistics, rejected ones as errors."
+  (emcp-test-with-http-server server (apply #'emcp--server-build emcp-test-primitives)
+    (emcp-test-with-http-connection conn server
+      (emcp-tests--http-listen conn 1 '((toolsListChanged . t))))
+    (emcp-test-with-http-connection conn server
+      (emcp-test-http-request conn 'POST (emcp-test-make-request "subscriptions/listen")))
+    (let ((stats (emcp--server-stats server)))
+      (should (= (gethash "subscriptions/listen" (emcp--server-stats-methods stats)) 2))
+      (should (= (emcp--server-stats-errors stats) 1)))))
+
 (ert-deftest emcp-tests-http-listen-list-changed ()
   ;; Each stream receives the list changes it asked for.
   (emcp-test-with-http-server server (apply #'emcp--server-build emcp-test-primitives)

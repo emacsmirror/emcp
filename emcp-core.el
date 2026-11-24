@@ -314,6 +314,30 @@ https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/cachin
 
 ;;; MCP Server
 
+(cl-defstruct (emcp--server-stats (:constructor emcp--make-server-stats)
+                                  (:copier nil))
+  "Request statistics of an MCP server for display in the server manager.
+
+The `request-count' of the server is the total number of requests."
+  (errors 0 :type 'integer :documentation "Number of error responses.")
+  (last-request nil :documentation "Time of the latest request, or nil.")
+  (methods (make-hash-table :test 'equal) :type 'hash-table
+           :documentation "Number of requests per method.")
+  (names (make-hash-table :test 'equal) :type 'hash-table
+         :documentation "Hash table of the number of requests per tool,
+prompt or resource name for each of the methods \"tools/call\",
+\"prompts/get\" and \"resources/read\".")
+  (clients (make-hash-table :test 'equal) :type 'hash-table
+           :documentation "`emcp--client-stats' per client key, see
+`emcp--server-stats-client-key'."))
+
+(cl-defstruct (emcp--client-stats (:constructor emcp--make-client-stats)
+                                  (:copier nil))
+  "Request statistics of a single client of an MCP server."
+  (requests 0 :type 'integer :documentation "Number of requests.")
+  (first-seen nil :documentation "Time of the first request.")
+  (last-seen nil :documentation "Time of the latest request."))
+
 (cl-defstruct (emcp--server (:constructor emcp--make-server)
                             (:copier nil))
   "An MCP server."
@@ -335,7 +359,10 @@ https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/cachin
   (subscriptions nil :type 'list
                  :documentation "Open `emcp--subscription's.")
   (request-count 0 :type 'integer
-                 :documentation "Number of requests so far, for logging."))
+                 :documentation "Number of requests so far, for logging and statistics.")
+  (started (current-time) :documentation "Time at which the server was built.")
+  (stats (emcp--make-server-stats) :type 'emcp--server-stats
+         :documentation "Request statistics, see `emcp--server-record-request'."))
 
 (cl-defun emcp--server-build (&key name prompts resources tools)
   "Build a new MCP server from lists of primitive symbols.
@@ -483,13 +510,19 @@ the JSON-RPC error CODE, MESSAGE and DATA."
         (fail emcp--jsonrpc-invalid-params
               (format "Invalid log level in _meta: %S" log-level)))
        (t
-        (emcp--make-context :server server
-                            :protocol-version version
-                            :client-info client-info
-                            :client-capabilities capabilities
-                            :request-id (gethash "id" request)
-                            ;; Client ids are only unique per client
-                            :number (cl-incf (emcp--server-request-count server))))))))
+        ;; Every request with a context is counted here exactly once,
+        ;; including subscriptions/listen, which bypasses
+        ;; `emcp--server-on-request'
+        (let ((context (emcp--make-context
+                        :server server
+                        :protocol-version version
+                        :client-info client-info
+                        :client-capabilities capabilities
+                        :request-id (gethash "id" request)
+                        ;; Client ids are only unique per client
+                        :number (cl-incf (emcp--server-request-count server)))))
+          (emcp--server-record-request server context request)
+          context))))))
 
 (defun emcp--context-client-info-field (context field)
   "Return the non-empty string FIELD of CONTEXT's clientInfo, or nil."
@@ -550,6 +583,65 @@ The label is the clientInfo name or dashes if the name is unknown."
                                  emcp--log-escape-placeholder name t t)
        emcp--log-label-width nil ?\s)
     (make-string emcp--log-label-width ?-)))
+
+;;; Statistics
+
+(defun emcp--server-request-name (server request)
+  "Return the name under which REQUEST to SERVER counts in the statistics.
+
+This is the tool or prompt name of a \"tools/call\" or \"prompts/get\"
+request and the resource URI of a \"resources/read\" request, as the
+client sent them, also if SERVER has no such primitive.  Reads through a
+resource template count for the template.  Return nil for other
+requests."
+  (when-let* ((params (gethash "params" request))
+              ((hash-table-p params)))
+    (pcase (gethash "method" request)
+      ((or "tools/call" "prompts/get")
+       (when-let* ((name (gethash "name" params))
+                   ((stringp name)))
+         name))
+      ("resources/read"
+       (when-let* ((uri (gethash "uri" params))
+                   ((stringp uri)))
+         (if-let* (((not (gethash uri (emcp--server-resources server))))
+                   (match (emcp--server-find-resource-template server uri)))
+             (plist-get (get (car match) 'emcp-resource-template) :name)
+           uri))))))
+
+(defun emcp--server-stats-client-key (context)
+  "Return the key under which the request with CONTEXT counts per client.
+
+The key is (NAME . VERSION) from the clientInfo with VERSION possibly
+nil, or nil without a clientInfo name."
+  (when-let* ((name (emcp--context-client-info-field context "name")))
+    (cons name (emcp--context-client-info-field context "version"))))
+
+(defun emcp--server-record-request (server context request)
+  "Count REQUEST with CONTEXT in the statistics of SERVER."
+  (let* ((stats (emcp--server-stats server))
+         (method (gethash "method" request))
+         (name (emcp--server-request-name server request))
+         (client (emcp--server-stats-client-key context))
+         (now (current-time)))
+    (setf (emcp--server-stats-last-request stats) now)
+    (cl-incf (gethash method (emcp--server-stats-methods stats) 0))
+    (when name
+      (let ((names (emcp--server-stats-names stats)))
+        (cl-incf (gethash name (or (gethash method names)
+                                   (puthash method (make-hash-table :test 'equal) names))
+                          0))))
+    (if-let* ((client-stats (gethash client (emcp--server-stats-clients stats))))
+        (progn
+          (cl-incf (emcp--client-stats-requests client-stats))
+          (setf (emcp--client-stats-last-seen client-stats) now))
+      (puthash client
+               (emcp--make-client-stats :requests 1 :first-seen now :last-seen now)
+               (emcp--server-stats-clients stats)))))
+
+(defun emcp--server-record-error (server)
+  "Count an error response in the statistics of SERVER."
+  (cl-incf (emcp--server-stats-errors (emcp--server-stats server))))
 
 ;;; Subscriptions
 
@@ -694,69 +786,79 @@ has been cancelled via `emcp--context-cancel' by then."
     (debug (if-let* ((params (gethash "params" request)))
                (emcp--prefix-lines "> " (emcp--log-pp (emcp--to-alist params)))
              "No parameters")))
-  (cl-flet ((log-and-send (response)
-              (let ((cancelled (emcp-context-cancelled context)))
-                (emcp--log server context
-                  (info (format "%s %s"
-                                ;; The spec forbids sending it
-                                (if cancelled "Dropping response" "Response")
-                                (if (alist-get 'error response) "error" "ok")))
-                  (debug (emcp--prefix-lines "< " (emcp--log-pp
-                                                   (or (alist-get 'result response)
-                                                       (alist-get 'error response))))))
-                (unless cancelled
-                  (condition-case err
-                      (funcall send-response response)
-                    (error
-                     (emcp--log server context
-                       (error (format "Failed to send response: %s"
-                                      (error-message-string err))))
-                     ;; Answer the request anyway, e.g. if RESPONSE is
-                     ;; not valid JSON
-                     (condition-case fallback-err
-                         (funcall send-response (emcp--jsonrpc-error
-                                                 request
-                                                 emcp--jsonrpc-internal-error
-                                                 "Failed to send response"))
-                       (error
-                        (emcp--log server context
-                          (error (format "Failed to send error response: %s"
-                                         (error-message-string fallback-err))))))
-                     ;; Let the caller know about the original failure
-                     (signal (car err) (cdr err))))))))
-    (handler-bind
-        ;; Last resort response in case an error interrupts request handling
-        ((error
-          (lambda (err)
-            (emcp--log server context
-              (error (format "Error during request handling:\n%s"
-                             (emcp--prefix-lines "| " (error-message-string err)))))
-            (ignore-errors
-              (log-and-send (emcp--jsonrpc-error
-                             request
-                             emcp--jsonrpc-internal-error
-                             "Internal server error"))))))
-      (pcase (gethash "method" request)
-        ("server/discover"
-         (emcp--server-request--discover server context request #'log-and-send))
-        ("prompts/list"
-         (emcp--server-request--prompts-list server context request #'log-and-send))
-        ("prompts/get"
-         (emcp--server-request--prompts-get server context request #'log-and-send))
-        ("resources/list"
-         (emcp--server-request--resources-list server context request #'log-and-send))
-        ("resources/templates/list"
-         (emcp--server-request--resources-templates-list server context request #'log-and-send))
-        ("resources/read"
-         (emcp--server-request--resources-read server context request #'log-and-send))
-        ("tools/list"
-         (emcp--server-request--tools-list server context request #'log-and-send))
-        ("tools/call"
-         (emcp--server-request--tools-call server context request #'log-and-send))
-        (_ (log-and-send (emcp--jsonrpc-error
-                          request
-                          emcp--jsonrpc-method-not-found
-                          "Method not found")))))))
+  (let (responded)
+    (cl-flet ((log-and-send (response)
+                ;; The spec forbids sending a response after a
+                ;; cancellation or a second response, e.g. the
+                ;; last-resort error after a body has already sent its
+                ;; result
+                (let ((dropped (or responded (emcp-context-cancelled context))))
+                  (emcp--log server context
+                    (info (format "%s %s"
+                                  (if dropped "Dropping response" "Response")
+                                  (if (alist-get 'error response) "error" "ok")))
+                    (debug (emcp--prefix-lines "< " (emcp--log-pp
+                                                     (or (alist-get 'result response)
+                                                         (alist-get 'error response))))))
+                  (unless dropped
+                    (setq responded t)
+                    (condition-case err
+                        (progn
+                          (funcall send-response response)
+                          (when (alist-get 'error response)
+                            (emcp--server-record-error server)))
+                      (error
+                       (emcp--log server context
+                         (error (format "Failed to send response: %s"
+                                        (error-message-string err))))
+                       ;; Answer the request anyway, e.g. if RESPONSE is
+                       ;; not valid JSON
+                       (condition-case fallback-err
+                           (progn
+                             (funcall send-response (emcp--jsonrpc-error
+                                                     request
+                                                     emcp--jsonrpc-internal-error
+                                                     "Failed to send response"))
+                             (emcp--server-record-error server))
+                         (error
+                          (emcp--log server context
+                            (error (format "Failed to send error response: %s"
+                                           (error-message-string fallback-err))))))
+                       ;; Let the caller know about the original failure
+                       (signal (car err) (cdr err))))))))
+      (handler-bind
+          ;; Last resort response in case an error interrupts request handling
+          ((error
+            (lambda (err)
+              (emcp--log server context
+                (error (format "Error during request handling:\n%s"
+                               (emcp--prefix-lines "| " (error-message-string err)))))
+              (ignore-errors
+                (log-and-send (emcp--jsonrpc-error
+                               request
+                               emcp--jsonrpc-internal-error
+                               "Internal server error"))))))
+        (pcase (gethash "method" request)
+          ("server/discover"
+           (emcp--server-request--discover server context request #'log-and-send))
+          ("prompts/list"
+           (emcp--server-request--prompts-list server context request #'log-and-send))
+          ("prompts/get"
+           (emcp--server-request--prompts-get server context request #'log-and-send))
+          ("resources/list"
+           (emcp--server-request--resources-list server context request #'log-and-send))
+          ("resources/templates/list"
+           (emcp--server-request--resources-templates-list server context request #'log-and-send))
+          ("resources/read"
+           (emcp--server-request--resources-read server context request #'log-and-send))
+          ("tools/list"
+           (emcp--server-request--tools-list server context request #'log-and-send))
+          ("tools/call"
+           (emcp--server-request--tools-call server context request #'log-and-send))
+          (_ (log-and-send (emcp--jsonrpc-error
+                            request
+                            emcp--jsonrpc-method-not-found
+                            "Method not found"))))))))
 
 (defun emcp--server-request--discover (server _context request send-response)
   "Describe SERVER and its capabilities.

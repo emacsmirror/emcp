@@ -87,6 +87,46 @@ kill the buffer afterwards."
     (should (equal (emcp-tests--server-manager-active-mode 'beta "Eval") "reject"))
     (should (equal (emcp-tests--server-manager-active-mode 'beta "Send-keys") "ask"))))
 
+(ert-deftest emcp-tests-server-manager-statistics ()
+  "A server section shows its uptime, subscriptions, requests and clients.
+
+Requests are broken down by method and by tool name.  Clients seen
+recently are marked with an asterisk."
+  (emcp-tests-with-server-manager '(alpha)
+    (let* ((server (alist-get 'alpha emcp--servers))
+           (claude (emcp-test-make-client
+                    :server server :client-info '((name . "claude") (version . "2.0")))))
+      (emcp--server-reload server :tools '(emcp-test--tool))
+      (emcp-test-client-request claude "tools/call" '((name . "tool")))
+      (emcp-test-client-request claude "tools/call" '((name . "tool")))
+      (emcp-test-client-request claude "tools/list")
+      (emcp-test-client-request claude "tools/unknown")
+      (emcp-test-with-http-connection conn server
+        (emcp-test-http-request conn 'POST (emcp-test-make-listen-request
+                                            1 '((toolsListChanged . t))))
+        ;; The subscription is open once its acknowledgment arrives
+        (emcp-test-http-read-event conn)
+        (emcp-server-manager-refresh)
+        (let ((time "[0-9]\\{2\\}:[0-9]\\{2\\}"))
+          (dolist (line `(,(concat "  Uptime: +0m (since [0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\} "
+                                   time ")")
+                          "  Subscriptions: +1 open"
+                          ,(concat "  Requests: +5 (1 error), last " time ":[0-9]\\{2\\}")
+                          "  Methods"
+                          "      tools/call +2"
+                          "      tools/list +1"
+                          "      tools/unknown +1"
+                          "      subscriptions/listen +1"
+                          "  Tools"
+                          "      tool +2"
+                          "  Clients"
+                          ,(concat "    \\* claude 2\\.0 +4 requests +since " time
+                                   " +last " time ":[0-9]\\{2\\}")
+                          ,(concat "    \\* (unknown) +1 request +since " time
+                                   " +last " time ":[0-9]\\{2\\}")))
+            (ert-info (line)
+              (should (string-match-p (concat "^" line "$") (buffer-string))))))))))
+
 (ert-deftest emcp-tests-server-manager-cycle-modes ()
   (emcp-tests-with-server-manager '(alpha beta)
     (let ((server (alist-get 'beta emcp--servers)))

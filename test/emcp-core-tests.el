@@ -506,6 +506,58 @@ receive the arguments they were registered with."
         (funcall send-result '((content . []))))
       (should-not responses))))
 
+;;; Statistics
+
+(defun emcp-tests--table-alist (table)
+  "Return the entries of the hash table TABLE as an alist in insertion order."
+  (let (entries)
+    (maphash (lambda (key value) (push (cons key value) entries)) table)
+    (nreverse entries)))
+
+(ert-deftest emcp-tests-statistics ()
+  "The server counts requests per method, name and client, and errors.
+
+Unknown methods and tools count as sent.  Requests without clientInfo
+count for the client nil.  Reads through a resource template count for
+the template."
+  (emcp-test-with-server server (apply #'emcp--server-build emcp-test-primitives)
+    (let ((claude (emcp-test-make-client
+                   :server server :client-info '((name . "claude") (version . "2.0"))))
+          (anonymous (emcp-test-make-client :server server)))
+      (emcp-test-client-request claude "tools/call" '((name . "tool")))
+      (emcp-test-client-request claude "tools/call" '((name . "tool")))
+      (emcp-test-client-request claude "tools/call" '((name . "missing")))
+      (emcp-test-client-request claude "resources/read" '((uri . "emcp://test/template/1")))
+      (emcp-test-client-request anonymous "resources/read" '((uri . "emcp://test/static")))
+      (emcp-test-client-request anonymous "resources/read" '((uri . "emcp://test/template/2")))
+      (emcp-test-client-request anonymous "prompts/get" '((name . "prompt")))
+      (emcp-test-client-request anonymous "tools/unknown")
+      (emcp-tests--subscribe server 1 '((toolsListChanged . t)))
+      (let* ((stats (emcp--server-stats server))
+             (names (emcp--server-stats-names stats))
+             (clients (emcp--server-stats-clients stats))
+             (claude-stats (gethash '("claude" . "2.0") clients))
+             (anonymous-stats (gethash nil clients)))
+        (should (= (emcp--server-request-count server) 9))
+        (should (= (emcp--server-stats-errors stats) 2))
+        (should (equal (emcp-tests--table-alist (emcp--server-stats-methods stats))
+                       '(("tools/call" . 3) ("resources/read" . 3) ("prompts/get" . 1)
+                         ("tools/unknown" . 1) ("subscriptions/listen" . 1))))
+        (should (equal (emcp-tests--table-alist (gethash "tools/call" names))
+                       '(("tool" . 2) ("missing" . 1))))
+        (should (equal (emcp-tests--table-alist (gethash "resources/read" names))
+                       '(("emcp://test/template/{id}" . 2) ("emcp://test/static" . 1))))
+        (should (equal (emcp-tests--table-alist (gethash "prompts/get" names))
+                       '(("prompt" . 1))))
+        (should (equal (mapcar #'car (emcp-tests--table-alist clients))
+                       '(("claude" . "2.0") nil)))
+        (should (= (emcp--client-stats-requests claude-stats) 4))
+        (should (= (emcp--client-stats-requests anonymous-stats) 5))
+        (should-not (time-less-p (emcp--client-stats-last-seen claude-stats)
+                                 (emcp--client-stats-first-seen claude-stats)))
+        (should (time-equal-p (emcp--client-stats-last-seen anonymous-stats)
+                              (emcp--server-stats-last-request stats)))))))
+
 ;;; Subscriptions
 
 (defun emcp-tests--subscribe (server id notifications)
