@@ -993,7 +993,7 @@ Default:
 	       (emcp-tools-eval emcp-tools-send-keys)))
 #+end_src
 
-** [[./emcp-server-manager.el::63][~emcp-server-manager-buffer-name~]]
+** [[./emcp-server-manager.el::65][~emcp-server-manager-buffer-name~]]
 :PROPERTIES:
 :CUSTOM_ID: custom-emcp-server-manager-buffer-name
 :END:
